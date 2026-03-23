@@ -6,6 +6,11 @@ export default defineConfig({
   vite: () => ({
     plugins: [tailwindcss()],
   }),
+  // 禁止 pnpm dev 自动开新 Chrome，改用主 Chrome Load unpacked → .output/chrome-mv3
+  // 这样主 Chrome 里的插件能连上 dev server，background 变更才能自动 reload
+  webExt: {
+    disabled: true,
+  },
   manifest: {
     name: 'Cursor Stats',
     description: 'Track your Cursor.com API usage & spending — fully local',
