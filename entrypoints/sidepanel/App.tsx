@@ -202,7 +202,10 @@ function App() {
   };
 
   const handleOpenLogin = () => {
-    chrome.tabs.create({ url: 'https://cursor.com/login', active: true });
+    chrome.runtime.sendMessage({ type: 'OPEN_DASHBOARD_TAB' }).catch(() => {
+      // background 未响应时降级：直接打开 usage URL（未登录会跳 auth，登后跳回触发 content script）
+      chrome.tabs.create({ url: 'https://cursor.com/cn/dashboard/usage', active: true });
+    });
   };
 
   // ── 渲染 ────────────────────────────────────────────────────────────────────

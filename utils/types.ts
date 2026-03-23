@@ -53,6 +53,8 @@ export type ExtMessage =
   | { type: 'PAGE_READY'; page: 'usage' | 'spending' }
   // sidepanel → background：触发立即采集 / 重新调度 alarm
   | { type: 'TRIGGER_SCRAPE' }
+  // sidepanel → background：聚焦后台 tab 让用户登录（一次性允许前台）
+  | { type: 'OPEN_DASHBOARD_TAB' }
   // background → sidepanel：状态通知
   | { type: 'TAB_CLOSED' }
   | { type: 'TAB_OPENED';    tabId: number }

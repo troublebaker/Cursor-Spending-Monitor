@@ -127,11 +127,39 @@ export default defineBackground(async () => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
   // ── 消息处理（content script / sidepanel → background） ──────────────────────
-  chrome.runtime.onMessage.addListener((msg: ExtMessage, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: ExtMessage, sender, sendResponse) => {
 
     // content script 就绪，background 回复采集参数
+    // ★ 关键：runtime.onMessage 是可靠的 SW 唤醒事件（不同于 tabs.onUpdated）
+    //   在此同时处理：登录恢复检测 + tab 采纳 + loginRequired 清除
     if (msg.type === 'PAGE_READY') {
       (async () => {
+        const senderTabId = sender.tab?.id ?? null;
+        const state       = await scrapeStateStorage.getValue();
+        const savedId     = await dashboardTabIdStorage.getValue();
+
+        // 若处于登录等待态，采纳当前 tab 为 background tab，立刻恢复
+        if (state.loginRequired && senderTabId !== null) {
+          if (senderTabId !== savedId) {
+            await dashboardTabIdStorage.setValue(senderTabId);
+            console.log(`[cursor-stats] PAGE_READY: adopted tab ${senderTabId} (login restored)`);
+          }
+          await scrapeStateStorage.setValue({
+            ...state, loginRequired: false, isRunning: true, lastError: null,
+          });
+          cycleUsageAdded = 0;
+          await chrome.alarms.clear('scrape'); // 取消待触发的登录重试
+          broadcastToContexts({ type: 'LOGIN_RESTORED' });
+          console.log('[cursor-stats] login restored via PAGE_READY');
+        } else if (!state.isRunning && senderTabId !== null) {
+          // 非登录等待，但没有 isRunning（用户手动打开 dashboard），也标记运行态
+          await scrapeStateStorage.setValue({ ...state, isRunning: true, lastError: null });
+          cycleUsageAdded = 0;
+          if (senderTabId !== savedId) {
+            await dashboardTabIdStorage.setValue(senderTabId);
+          }
+        }
+
         const latestDt = await getLatestDt();
         const params: ScrapeParams = {
           isIncremental: latestDt !== null,
@@ -217,6 +245,22 @@ export default defineBackground(async () => {
       return true;
     }
 
+    // 用户点击「去登录」：聚焦后台 tab 并导航到 usage URL（登录后 content script 自动触发）
+    if (msg.type === 'OPEN_DASHBOARD_TAB') {
+      (async () => {
+        const tabId = await ensureDashboardTab();
+        // 导航到 usage URL（未登录时 cursor.com 自动跳 auth，登录后跳回来 content script 触发）
+        await chrome.tabs.update(tabId, { url: DEFAULT_USAGE_URL, active: true });
+        // 同时将该 tab 所在的窗口聚焦
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (tab?.windowId) {
+          await chrome.windows.update(tab.windowId, { focused: true });
+        }
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
     return false;
   });
 
@@ -239,18 +283,35 @@ export default defineBackground(async () => {
     }
   });
 
-  // ── 登录重定向检测 ────────────────────────────────────────────────────────────
+  // ── Tab 监听：监听所有 cursor.com tab，任意 dashboard tab 都可唤醒采集 ────────
   chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    const savedId = await dashboardTabIdStorage.getValue();
-    if (tabId !== savedId || changeInfo.status !== 'complete' || !tab.url) return;
+    if (changeInfo.status !== 'complete' || !tab.url) return;
 
+    // 不是 cursor.com / cursor.sh 相关页面，跳过
+    if (!tab.url.includes('cursor.com') && !tab.url.includes('cursor.sh')) return;
+
+    const savedId = await dashboardTabIdStorage.getValue();
+    const state   = await scrapeStateStorage.getValue();
+
+    // ① 任意 tab 落在登录/Auth 页
     if (isAuthRedirect(tab.url)) {
-      const state = await scrapeStateStorage.getValue();
-      await scrapeStateStorage.setValue({ ...state, isRunning: false });
-      broadcastToContexts({ type: 'LOGIN_REQUIRED' });
-    } else if (tab.url.includes('/dashboard/')) {
-      // 用户完成登录后 tab 跳回 dashboard：清除登录等待态 + 立刻触发采集
-      const state = await scrapeStateStorage.getValue();
+      // 只有 background tab 跳到登录页才视为"未登录"
+      if (tabId === savedId) {
+        await scrapeStateStorage.setValue({ ...state, isRunning: false, loginRequired: true });
+        broadcastToContexts({ type: 'LOGIN_REQUIRED' });
+        await scheduleLoginRetry();
+      }
+      return;
+    }
+
+    // ② 任意 tab 落在 /dashboard/（用户手动打开、重试成功、或从 auth 跳回）
+    if (tab.url.includes('/dashboard/')) {
+      // 采纳这个 tab 为新的 background tab（不切换焦点，保持后台静默）
+      if (tabId !== savedId) {
+        await dashboardTabIdStorage.setValue(tabId);
+        console.log(`[cursor-stats] adopted tab ${tabId} as dashboard tab`);
+      }
+      // 若正在等待登录 OR 当前没有采集在跑，立刻开始一轮
       if (state.loginRequired || !state.isRunning) {
         await scrapeStateStorage.setValue({ ...state, loginRequired: false });
         broadcastToContexts({ type: 'LOGIN_RESTORED' });
