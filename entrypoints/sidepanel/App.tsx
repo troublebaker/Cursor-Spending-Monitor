@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import { useI18n } from '../../utils/i18n';
 import type { ThemeMode } from '../../hooks/useTheme';
@@ -55,6 +55,10 @@ function App() {
   // UI 通知状态
   const [tabClosed,      setTabClosed]      = useState(false);
   const [loginRequired,  setLoginRequired]  = useState(false);
+  // 采集结果（5 秒后自动清除）
+  const [lastResult, setLastResult] = useState<{ ok: boolean; added: number } | null>(null);
+  const prevIsRunningRef  = useRef(false);
+  const prevUsageLengthRef = useRef(0);
 
   // ── 初始化 + storage watch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -112,14 +116,35 @@ function App() {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  // ── 月度计算 ────────────────────────────────────────────────────────────────
+  // ── 采集完成检测（isRunning true→false 时计算新增条数） ──────────────────────
+  useEffect(() => {
+    const wasRunning = prevIsRunningRef.current;
+    prevIsRunningRef.current = isRunning;
+
+    if (wasRunning && !isRunning) {
+      // 稍等 500ms 让 usageStorage.watch 更新 usage 后再对比
+      const id = setTimeout(() => {
+        const added = Math.max(0, usage.length - prevUsageLengthRef.current);
+        setLastResult({ ok: true, added });
+        prevUsageLengthRef.current = usage.length;
+        const dismissId = setTimeout(() => setLastResult(null), 5000);
+        return () => clearTimeout(dismissId);
+      }, 500);
+      return () => clearTimeout(id);
+    }
+    if (!isRunning) {
+      prevUsageLengthRef.current = usage.length;
+    }
+  // isRunning 变化时执行，usage.length 在 timeout 内读取
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning]);
   const currentMonth = new Date().toISOString().slice(0, 7);
   const monthRecords = useMemo(
     () => usage.filter(r => r.dt.startsWith(currentMonth)),
     [usage, currentMonth],
   );
   const monthlyCost = useMemo(
-    () => monthRecords.filter(r => r.type === 'On-Demand').reduce((s, r) => s + r.cost, 0),
+    () => monthRecords.filter(r => r.type.toLowerCase().includes('on-demand')).reduce((s, r) => s + r.cost, 0),
     [monthRecords],
   );
 
@@ -229,6 +254,7 @@ function App() {
         lastScrapeAt={lastScrapeAt}
         scrapeMode={scrapeMode}
         noDataCount={noDataCount}
+        lastResult={lastResult}
         onModeChange={handleModeChange}
         onScrapeNow={handleScrapeNow}
       />

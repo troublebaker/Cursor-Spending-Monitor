@@ -123,53 +123,45 @@ export async function scrapeIncremental(cutoffDt: Date): Promise<UsageRecord[]> 
 }
 
 // ─── Spending 页面解析 ─────────────────────────────────────────────────────────
-// 全程使用正则匹配文本，不依赖 class 名（cursor.com Tailwind 类会随构建变化）
+// 使用 document.body.innerText 全文正则，不依赖 class 名或元素结构
+// 基于真实数据验证（Ultra 计划，$200/mo，2026-03-23）
 
 export function parseSpending(): SpendingData {
-  const allText = Array.from(document.querySelectorAll('span, div, p, h1, h2, h3'))
-    .map(el => el.textContent?.trim() ?? '')
-    .filter(t => t.length > 0);
+  const raw = document.body.innerText ?? '';
 
-  // 套餐名：常见值 "Pro" | "Pro+" | "Business"
-  const planNames = ['Pro+', 'Business', 'Pro', 'Free'];
-  const planName = planNames.find(n => allText.some(t => t === n)) ?? 'Unknown';
+  // 套餐名：按优先级匹配，Ultra 最先（避免被 Pro 前缀误匹配）
+  const planNames = ['Ultra', 'Pro+', 'Business', 'Pro', 'Free'];
+  const planName = planNames.find(n => new RegExp(`\\b${n}\\b`).test(raw)) ?? 'Unknown';
 
-  // 套餐价格：匹配 "$20/month" 或 "$20 / month"
-  const priceMatch = allText.find(t => /\$\d+\s*\/\s*month/i.test(t));
-  const planPrice = priceMatch?.match(/\$[\d.]+\s*\/\s*month/i)?.[0] ?? '';
+  // 套餐价格：支持 "$200/mo" 和 "$20/month"
+  const priceMatch = raw.match(/\$([\d,]+)\/mo(?:nth)?/i);
+  const planPrice = priceMatch ? `$${priceMatch[1]}/mo` : '';
 
-  // 重置日期：格式多样，取含月日的字符串
-  const resetMatch = allText.find(t => /next\s+reset|resets?\s+on/i.test(t));
-  const resetDate = resetMatch?.replace(/next\s+reset[:\s]*/i, '').trim()
-    ?? allText.find(t => /\d{4}-\d{2}-\d{2}/.test(t))
-    ?? '';
+  // 重置日期：如 "Resets on 4月22日 (31 days)"
+  const resetMatch = raw.match(/Resets on (.+?)(?:\n|$)/i);
+  const resetDate = resetMatch ? resetMatch[1].trim() : '';
 
-  // 各用量百分比：通过相邻标签定位
-  const autoPct = extractPctByLabel(allText, ['Auto', 'Autocomplete']);
-  const apiPct  = extractPctByLabel(allText, ['API']);
-  const totalPct = extractPctByLabel(allText, ['Total', 'Overall']) ?? Math.round((autoPct ?? 0) + (apiPct ?? 0));
+  // Total%：支持合并格式 "Total0%" 和分开格式 "Total 5%"
+  const totalMatch = raw.match(/Total\s*(\d+(?:\.\d+)?)%/i);
+  const totalPct = totalMatch ? parseFloat(totalMatch[1]) : 0;
 
-  // 按需用量："$X.XX" 或 "$X of $Y"
-  const demandMatch = allText.find(t => /\$[\d.]+\s+of\s+\$[\d.]+/.test(t));
-  let demandUsed = 0;
-  let demandLimit = 50; // Pro 默认 $50
+  // Auto/API%：真实格式 "0% Auto and 1% API used"
+  const autoApiMatch = raw.match(/(\d+(?:\.\d+)?)%\s+Auto\s+and\s+(\d+(?:\.\d+)?)%\s+API/i);
+  // 降级：分别找标签附近的 %
+  const autoPct = autoApiMatch
+    ? parseFloat(autoApiMatch[1])
+    : (raw.match(/Auto[^%]*?(\d+(?:\.\d+)?)%/i)?.[1] ? parseFloat(raw.match(/Auto[^%]*?(\d+(?:\.\d+)?)%/i)![1]) : 0);
+  const apiPct = autoApiMatch
+    ? parseFloat(autoApiMatch[2])
+    : (raw.match(/API[^%]*?(\d+(?:\.\d+)?)%/i)?.[1] ? parseFloat(raw.match(/API[^%]*?(\d+(?:\.\d+)?)%/i)![1]) : 0);
 
+  // 按需用量：支持格式 "On-Demand$0.00 / $200" 和 "$0.00 / $200"
+  const demandMatch = raw.match(/\$([\d.]+)\s*\/\s*\$([\d,]+)/);
+  let demandUsed  = 0;
+  let demandLimit = 50;
   if (demandMatch) {
-    const nums = demandMatch.match(/\$([\d.]+)\s+of\s+\$([\d.]+)/);
-    if (nums) {
-      demandUsed  = parseFloat(nums[1]);
-      demandLimit = parseFloat(nums[2]);
-    }
-  } else {
-    // 降级：从 "Your plan includes at least $X" 提取上限
-    const limitText = allText.find(t => /includes\s+at\s+least\s+\$[\d.]+/.test(t));
-    if (limitText) {
-      const m = limitText.match(/\$([\d.]+)/);
-      if (m) demandLimit = parseFloat(m[1]);
-    }
-    // 按需已用：单独的 "$X.XX" 出现在进度条附近
-    const usedText = allText.find(t => /^\$[\d.]+$/.test(t) && parseFloat(t.slice(1)) <= demandLimit);
-    if (usedText) demandUsed = parseFloat(usedText.slice(1));
+    demandUsed  = parseFloat(demandMatch[1]);
+    demandLimit = parseFloat(demandMatch[2].replace(/,/g, ''));
   }
 
   return {
@@ -177,24 +169,13 @@ export function parseSpending(): SpendingData {
     planName,
     planPrice,
     resetDate,
-    totalPct: totalPct ?? 0,
-    autoPct: autoPct ?? 0,
-    apiPct: apiPct ?? 0,
+    totalPct,
+    autoPct,
+    apiPct,
     demandUsed,
     demandLimit,
   };
 }
 
-/** 在文本列表中，找到 label 后紧接的百分比 */
-function extractPctByLabel(texts: string[], labels: string[]): number | undefined {
-  for (let i = 0; i < texts.length; i++) {
-    if (labels.some(l => texts[i].toLowerCase().includes(l.toLowerCase()))) {
-      // 向后搜索最近的百分比（最多 3 个位置）
-      for (let j = i + 1; j <= i + 3 && j < texts.length; j++) {
-        const m = texts[j].match(/^([\d.]+)\s*%$/);
-        if (m) return parseFloat(m[1]);
-      }
-    }
-  }
-  return undefined;
-}
+
+

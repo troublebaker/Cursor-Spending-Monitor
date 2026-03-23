@@ -15,7 +15,7 @@ function aggregate(records: UsageRecord[]) {
   for (const r of records) {
     const day = r.dt.slice(0, 10); // "2026-03-15"
     const entry = map.get(day) ?? { onDemand: 0, included: 0 };
-    if (r.type === 'On-Demand') entry.onDemand += 1;
+    if (r.type.toLowerCase().includes('on-demand')) entry.onDemand += 1;
     else entry.included += 1;
     map.set(day, entry);
   }

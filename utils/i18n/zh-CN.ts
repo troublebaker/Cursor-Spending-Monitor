@@ -65,6 +65,13 @@ export interface LocaleDict {
   statusIdle: string;
   statusWaiting: string;
   nextUpdate: string;
+  // F04 采集进度阶段（StatusBar 进度条）
+  stagePage: string;
+  stageUsage: string;
+  stageSpending: string;
+  scrapeNoNew: string;
+  scrapeFailed: string;
+  scrapeNewRecords: string;  // 单位词，如 "新记录"
 }
 
 const dict: LocaleDict = {
@@ -119,6 +126,12 @@ const dict: LocaleDict = {
   statusIdle: '空闲',
   statusWaiting: '等待登录',
   nextUpdate: '下次',
+  stagePage: '正在打开采集页…',
+  stageUsage: '正在采集用量记录…',
+  stageSpending: '正在采集账单信息…',
+  scrapeNoNew: '已是最新',
+  scrapeFailed: '采集失败',
+  scrapeNewRecords: '条新记录',
 };
 
 export default dict;

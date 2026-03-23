@@ -52,6 +52,12 @@ const dict: LocaleDict = {
   statusIdle: 'Idle',
   statusWaiting: 'Waiting for login',
   nextUpdate: 'Next',
+  stagePage: 'Opening dashboard…',
+  stageUsage: 'Collecting usage records…',
+  stageSpending: 'Collecting spending data…',
+  scrapeNoNew: 'Already up to date',
+  scrapeFailed: 'Collection failed',
+  scrapeNewRecords: 'new records',
 };
 
 export default dict;
