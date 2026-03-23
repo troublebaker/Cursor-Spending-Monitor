@@ -73,6 +73,11 @@ function App() {
       setIsRunning(ss.isRunning);
       setLastScrapeAt(ss.lastScrapeAt);
       setNoDataCount(ss.noDataCount);
+
+      // 侧边栏打开时自动触发一次采集（已引导 + 当前未在采集中）
+      if (ob && !ss.isRunning) {
+        chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
+      }
     });
 
     // 实时监听变化
