@@ -1,27 +1,17 @@
-:root {
-  font-family: Inter, system-ui, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color-scheme: light dark;
+@import "tailwindcss";
+
+/* 启用 class-based 深色模式（document.documentElement.classList.add('dark')） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 扩展主题：品牌色 + 圆角 */
+@theme {
+  --color-brand: #6366f1;
+  --color-brand-hover: #818cf8;
+  --radius-card: 0.75rem;
 }
 
 body {
   margin: 0;
   padding: 0;
   min-width: 280px;
-}
-
-.sidepanel-placeholder {
-  padding: 24px 16px;
-  text-align: center;
-}
-
-.sidepanel-placeholder h1 {
-  font-size: 1.4rem;
-  margin-bottom: 8px;
-}
-
-.sidepanel-placeholder p {
-  color: #888;
-  font-size: 0.9rem;
 }
