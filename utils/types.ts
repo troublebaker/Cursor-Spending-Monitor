@@ -32,6 +32,7 @@ export interface ScrapeState {
   lastError: string | null;
   isRunning: boolean;
   noDataCount: number;       // 连续无新数据次数，用于指数衰减
+  loginRequired: boolean;    // 未登录状态，用于侧边栏初始化时读取
 }
 
 // ─── F04 新增 ─────────────────────────────────────────────────────────────────

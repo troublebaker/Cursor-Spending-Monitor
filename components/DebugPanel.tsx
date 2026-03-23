@@ -27,6 +27,7 @@ export function DebugPanel({ t, usage, spending, currentMonth, monthRecordsCount
       lastScrapeAt: null,
       lastError: null,
       noDataCount: 0,
+      loginRequired: false,
     });
     setClearing(false);
     onDataCleared();

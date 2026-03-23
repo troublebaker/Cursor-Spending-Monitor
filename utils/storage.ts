@@ -35,6 +35,7 @@ export const scrapeStateStorage = storage.defineItem<ScrapeState>(
       lastError: null,
       isRunning: false,
       noDataCount: 0,
+      loginRequired: false,
     },
   },
 );

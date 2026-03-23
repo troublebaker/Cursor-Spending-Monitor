@@ -77,6 +77,9 @@ async function startScrapeCycle(): Promise<void> {
 
 async function finishCycle(usageAdded: number): Promise<void> {
   await onScrapeComplete(usageAdded);
+  // 清除登录等待状态
+  const state = await scrapeStateStorage.getValue();
+  await scrapeStateStorage.setValue({ ...state, loginRequired: false });
   await scheduleNextAlarm();
   broadcastToContexts({
     type: 'SCRAPE_STATUS',
@@ -96,6 +99,17 @@ async function scheduleNextAlarm(): Promise<void> {
   const intervalMin = nextIntervalMin(state.noDataCount, 1);
   await chrome.alarms.create('scrape', { delayInMinutes: intervalMin });
   console.log(`[cursor-stats] next scrape in ${intervalMin} min`);
+}
+
+/**
+ * 未登录时每 1 分钟重试一次，复用 scrape alarm。
+ * 当 alarm 触发时，startScrapeCycle 会导航后台 tab → content script 重新判断登录状态。
+ * Chrome alarms 最小延迟为 1 分钟（MV3 规范限制）。
+ */
+async function scheduleLoginRetry(): Promise<void> {
+  await chrome.alarms.clear('scrape');
+  await chrome.alarms.create('scrape', { delayInMinutes: 1 });
+  console.log('[cursor-stats] not logged in, will retry in 1 min');
 }
 
 // ─── 广播给所有侧边栏上下文 ────────────────────────────────────────────────────
@@ -167,12 +181,14 @@ export default defineBackground(async () => {
       return true;
     }
 
-    // 未登录 → 告知侧边栏，暂停调度
+    // 未登录 → 持久化状态 + 告知侧边栏 + 1 分钟后自动重试
     if (msg.type === 'NOT_LOGGED_IN') {
       (async () => {
         const state = await scrapeStateStorage.getValue();
-        await scrapeStateStorage.setValue({ ...state, isRunning: false });
+        await scrapeStateStorage.setValue({ ...state, isRunning: false, loginRequired: true });
         broadcastToContexts({ type: 'LOGIN_REQUIRED' });
+        // 每 1 分钟重新导航后台 tab，content script 检测到登录后自动继续采集
+        await scheduleLoginRetry();
       })();
       return false;
     }
@@ -233,9 +249,10 @@ export default defineBackground(async () => {
       await scrapeStateStorage.setValue({ ...state, isRunning: false });
       broadcastToContexts({ type: 'LOGIN_REQUIRED' });
     } else if (tab.url.includes('/dashboard/')) {
-      // 用户完成登录后 tab 跳回 dashboard：通知侧边栏并立刻触发一次采集
+      // 用户完成登录后 tab 跳回 dashboard：清除登录等待态 + 立刻触发采集
       const state = await scrapeStateStorage.getValue();
-      if (!state.isRunning) {
+      if (state.loginRequired || !state.isRunning) {
+        await scrapeStateStorage.setValue({ ...state, loginRequired: false });
         broadcastToContexts({ type: 'LOGIN_RESTORED' });
         await startScrapeCycle();
       }

@@ -78,9 +78,11 @@ function App() {
       setIsRunning(ss.isRunning);
       setLastScrapeAt(ss.lastScrapeAt);
       setNoDataCount(ss.noDataCount);
+      // 恢复持久化的登录等待状态（侧边栏重新打开时也能正确显示/隐藏提示）
+      setLoginRequired(ss.loginRequired ?? false);
 
-      // 侧边栏打开时自动触发一次采集（已引导 + 当前未在采集中）
-      if (ob && !ss.isRunning) {
+      // 侧边栏打开时自动触发一次采集（已引导 + 当前未在采集中 + 非登录等待）
+      if (ob && !ss.isRunning && !ss.loginRequired) {
         chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
       }
     });
@@ -93,6 +95,8 @@ function App() {
       setIsRunning(v.isRunning);
       setLastScrapeAt(v.lastScrapeAt);
       setNoDataCount(v.noDataCount);
+      // storage 里的 loginRequired 变化时同步到 UI（background 写 storage，侧边栏自动响应）
+      setLoginRequired(v.loginRequired ?? false);
     });
 
     return () => {

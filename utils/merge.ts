@@ -50,12 +50,13 @@ export async function saveSpending(data: SpendingData): Promise<void> {
 export async function onScrapeComplete(addedCount: number): Promise<void> {
   const prev = await scrapeStateStorage.getValue();
   const noDataCount = addedCount === 0 ? prev.noDataCount + 1 : 0;
-  await scrapeStateStorage.setValue({
-    lastScrapeAt: new Date().toISOString(),
-    lastError: null,
-    isRunning: false,
-    noDataCount,
-  });
+    await scrapeStateStorage.setValue({
+      lastScrapeAt: new Date().toISOString(),
+      lastError: null,
+      isRunning: false,
+      noDataCount,
+      loginRequired: false,
+    });
 }
 
 /** 计算下次采集等待时间（分钟），基准 1 min × 2^noDataCount，上限 60 min */
