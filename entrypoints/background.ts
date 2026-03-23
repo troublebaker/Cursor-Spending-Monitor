@@ -315,13 +315,40 @@ export default defineBackground(async () => {
 
   // ── Tab 监听：监听所有 cursor.com tab，任意 dashboard tab 都可唤醒采集 ────────
   chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    if (changeInfo.status !== 'complete' || !tab.url) return;
-
-    // 不是 cursor.com / cursor.sh 相关页面，跳过
+    if (!tab.url) return;
     if (!tab.url.includes('cursor.com') && !tab.url.includes('cursor.sh')) return;
 
     const savedId = await dashboardTabIdStorage.getValue();
     const state   = await scrapeStateStorage.getValue();
+
+    // ── 快速中断：后台 tab 在采集进行中导航离开 dashboard（退出登录等）──────────
+    // 用 loading 状态（而非 complete）立刻捕获，不等页面加载完成
+    // 原因：content script 被 navigation kill 时不会再发消息，isRunning 会永远卡住
+    if (
+      changeInfo.status === 'loading' &&
+      tabId === savedId &&
+      state.isRunning &&
+      !tab.url.includes('/dashboard/')
+    ) {
+      cycleStartedAt = 0;
+      cycleUsageAdded = 0;
+      const loginRelated = isAuthRedirect(tab.url);
+      await scrapeStateStorage.setValue({
+        ...state,
+        isRunning: false,
+        loginRequired: loginRelated,
+      });
+      if (loginRelated) {
+        broadcastToContexts({ type: 'LOGIN_REQUIRED' });
+        await scheduleLoginRetry();
+      } else {
+        broadcastToContexts({ type: 'SCRAPE_STATUS', isRunning: false });
+      }
+      console.log(`[cursor-stats] scrape aborted: tab ${tabId} left dashboard (login=${loginRelated})`);
+      return;
+    }
+
+    if (changeInfo.status !== 'complete') return;
 
     // ① 任意 tab 落在登录/Auth 页
     if (isAuthRedirect(tab.url)) {
@@ -382,4 +409,14 @@ export default defineBackground(async () => {
   });
 
   console.log('[cursor-stats] background ready');
+
+  /* ── DEV 热重载验证心跳 ── 需要时取消注释，验证完重新注释 ─────────────────────
+  if (import.meta.env.DEV) {
+    console.log(`%c[dev] background (re)loaded @ ${new Date().toLocaleTimeString()}`, 'color: #4ade80; font-weight: bold');
+    let beat = 0;
+    setInterval(() => {
+      console.log(`[dev] heartbeat #${++beat} @ ${new Date().toLocaleTimeString()}`);
+    }, 5000);
+  }
+  ── END DEV TEST ──────────────────────────────────────────────────────────── */
 });
