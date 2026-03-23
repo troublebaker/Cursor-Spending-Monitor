@@ -48,10 +48,16 @@ export type ExtMessage =
   // content → background：登录状态
   | { type: 'NOT_LOGGED_IN' }
   | { type: 'LOGIN_RESTORED' }
-  // background → content：触发采集
-  | { type: 'SCRAPE_NOW'; isIncremental: boolean }
+  // content → background：页面就绪，请求采集参数（background 通过 sendResponse 回复）
+  | { type: 'PAGE_READY'; page: 'usage' | 'spending' }
   // background → sidepanel：状态通知
   | { type: 'TAB_CLOSED' }
   | { type: 'TAB_OPENED';    tabId: number }
   | { type: 'SCRAPE_STATUS'; isRunning: boolean; lastScrapeAt: string | null }
   | { type: 'LOGIN_REQUIRED' };
+
+/** background 对 PAGE_READY 的同步响应体（不在 ExtMessage 内，是 sendResponse 值） */
+export interface ScrapeParams {
+  isIncremental: boolean;
+  cutoffIso: string | null;
+}
