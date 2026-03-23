@@ -58,10 +58,16 @@ export function parseRow(row: Element): UsageRecord | null {
 
   if (parts.length < 5) return null;
 
-  const [dt, type, model, tokensStr, costStr] = parts;
+  const [rawDt, type, model, tokensStr, costStr] = parts;
 
   // 忽略表头行
-  if (dt.toLowerCase().includes('date') || dt.toLowerCase().includes('时间')) return null;
+  if (rawDt.toLowerCase().includes('date') || rawDt.toLowerCase().includes('时间')) return null;
+
+  // 规范化日期：cursor.com 可能显示 "2026-03-22 03:01:32"（空格）或 ISO，统一转为 ISO
+  const dt = rawDt.replace(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})(.*)$/,
+    '$1T$2$3',
+  );
 
   return {
     dt,

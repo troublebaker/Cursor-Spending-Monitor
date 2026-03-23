@@ -31,7 +31,10 @@ export async function mergeRecords(newRecords: UsageRecord[]): Promise<number> {
 export async function getLatestDt(): Promise<Date | null> {
   const records = await usageStorage.getValue();
   if (records.length === 0) return null;
-  return new Date(records[0].dt);  // 已降序，第一条即最新
+  const d = new Date(records[0].dt);
+  // 防御：若 dt 格式无法被 V8 解析（Invalid Date），降级为全量采集
+  if (isNaN(d.getTime())) return null;
+  return d;
 }
 
 // ─── Spending 直接覆盖 ─────────────────────────────────────────────────────────
