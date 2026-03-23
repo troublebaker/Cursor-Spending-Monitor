@@ -9,6 +9,7 @@ import {
 import type { ScrapeParams } from '../utils/types';
 
 const USAGE_SELECTOR = '.dashboard-table-rows';
+const SCRAPE_TIMEOUT_MS = 30_000;
 
 function detectPage(): 'usage' | 'spending' | null {
   const path = location.pathname;
@@ -35,6 +36,29 @@ async function doScrape(
   }
 }
 
+async function runScrape(page: 'usage' | 'spending'): Promise<void> {
+  // 等待 SPA 内容渲染
+  if (page === 'usage') {
+    await waitForElement(USAGE_SELECTOR, 15_000);
+  } else {
+    await waitForElement('main', 8_000).catch(() => sleep(2_000));
+  }
+
+  // 通知 background 就绪，拿回采集参数
+  let params: ScrapeParams | null = null;
+  try {
+    params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page }) as ScrapeParams | null;
+  } catch {
+    // background SW 未响应（极少情况），按全量兜底
+  }
+
+  if (params) {
+    await doScrape(page, params.isIncremental, params.cutoffIso);
+  } else {
+    await doScrape(page, false, null);
+  }
+}
+
 export default defineContentScript({
   matches: [
     'https://cursor.com/*/dashboard/usage*',
@@ -49,36 +73,18 @@ export default defineContentScript({
 
     console.log(`[cursor-stats] injected on ${page} page`);
 
-    // 未登录检测（cursor.com 会重定向，但在 SPA 内切换时可能出现未认证状态）
     if (!isLoggedIn()) {
       chrome.runtime.sendMessage({ type: 'NOT_LOGGED_IN' });
       return;
     }
 
+    // 30 秒全局超时：任何阶段卡死都会触发 SCRAPE_ERROR，background 重置状态
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('scrape timeout (30s)')), SCRAPE_TIMEOUT_MS),
+    );
+
     try {
-      // 等待 SPA 内容渲染
-      if (page === 'usage') {
-        await waitForElement(USAGE_SELECTOR, 15_000);
-      } else {
-        // spending 页面没有固定容器，等待 main 或降级 sleep
-        await waitForElement('main', 8_000).catch(() => sleep(2_000));
-      }
-
-      // 通知 background 就绪，拿回采集参数
-      // background 通过 sendResponse 同步回复 ScrapeParams
-      let params: ScrapeParams | null = null;
-      try {
-        params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page }) as ScrapeParams | null;
-      } catch {
-        // background SW 未响应（极少情况），按全量兜底
-      }
-
-      if (params) {
-        await doScrape(page, params.isIncremental, params.cutoffIso);
-      } else {
-        // 用户手动打开 dashboard，或 background 无响应 → 全量采集
-        await doScrape(page, false, null);
-      }
+      await Promise.race([runScrape(page), timeout]);
     } catch (e) {
       console.error('[cursor-stats] scrape error', e);
       chrome.runtime.sendMessage({

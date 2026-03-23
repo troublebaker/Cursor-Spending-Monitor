@@ -32,6 +32,26 @@ function toSpendingUrl(url: string): string {
 // ─── Service worker 内的周期状态（非持久，SW 重启后归零无副作用） ──────────────
 
 let cycleUsageAdded = 0;
+/** 当前周期开始时间（ms），用于检测卡死超时 */
+let cycleStartedAt = 0;
+const CYCLE_TIMEOUT_MS = 30_000;
+
+/** 若上一个周期已超时（>30s 未完成），强制重置 isRunning */
+async function checkAndResetStaleCycle(): Promise<void> {
+  const state = await scrapeStateStorage.getValue();
+  if (state.isRunning && cycleStartedAt > 0 && Date.now() - cycleStartedAt > CYCLE_TIMEOUT_MS) {
+    console.log('[cursor-stats] stale cycle detected (>30s), force resetting');
+    await scrapeStateStorage.setValue({
+      ...state,
+      isRunning: false,
+      lastError: 'scrape timeout (30s)',
+    });
+    cycleStartedAt = 0;
+    cycleUsageAdded = 0;
+    await scheduleNextAlarm();
+    broadcastToContexts({ type: 'SCRAPE_STATUS', isRunning: false });
+  }
+}
 
 // ─── Tab 管理 ──────────────────────────────────────────────────────────────────
 
@@ -59,11 +79,15 @@ async function startScrapeCycle(): Promise<void> {
   const mode = await scrapeModeStorage.getValue();
   if (mode === 'manual') return;
 
+  // 检测上一个周期是否已超时卡死
+  await checkAndResetStaleCycle();
+
   const state = await scrapeStateStorage.getValue();
   if (state.isRunning) return;
 
   await scrapeStateStorage.setValue({ ...state, isRunning: true, lastError: null });
   cycleUsageAdded = 0;
+  cycleStartedAt = Date.now();
 
   const tabId = await ensureDashboardTab();
   const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -76,6 +100,7 @@ async function startScrapeCycle(): Promise<void> {
 }
 
 async function finishCycle(usageAdded: number): Promise<void> {
+  cycleStartedAt = 0; // 周期正常完成，清除超时守卫
   await onScrapeComplete(usageAdded);
   // 清除登录等待状态
   const state = await scrapeStateStorage.getValue();
@@ -148,6 +173,7 @@ export default defineBackground(async () => {
             ...state, loginRequired: false, isRunning: true, lastError: null,
           });
           cycleUsageAdded = 0;
+          cycleStartedAt = Date.now();
           await chrome.alarms.clear('scrape'); // 取消待触发的登录重试
           broadcastToContexts({ type: 'LOGIN_RESTORED' });
           console.log('[cursor-stats] login restored via PAGE_READY');
@@ -155,6 +181,7 @@ export default defineBackground(async () => {
           // 非登录等待，但没有 isRunning（用户手动打开 dashboard），也标记运行态
           await scrapeStateStorage.setValue({ ...state, isRunning: true, lastError: null });
           cycleUsageAdded = 0;
+          cycleStartedAt = Date.now();
           if (senderTabId !== savedId) {
             await dashboardTabIdStorage.setValue(senderTabId);
           }
@@ -201,6 +228,7 @@ export default defineBackground(async () => {
     // 采集报错 → 重置状态 → 重新调度
     if (msg.type === 'SCRAPE_ERROR') {
       (async () => {
+        cycleStartedAt = 0;
         const state = await scrapeStateStorage.getValue();
         await scrapeStateStorage.setValue({ ...state, isRunning: false, lastError: msg.error });
         await scheduleNextAlarm();
@@ -224,12 +252,14 @@ export default defineBackground(async () => {
     // sidepanel 触发立即采集（欢迎页「开始采集」、手动刷新、重新打开 tab）
     if (msg.type === 'TRIGGER_SCRAPE') {
       (async () => {
+        await checkAndResetStaleCycle();
         // 即使当前是 manual 模式也允许触发一次
         const state = await scrapeStateStorage.getValue();
         if (state.isRunning) { sendResponse({ ok: false, reason: 'already running' }); return; }
 
         await scrapeStateStorage.setValue({ ...state, isRunning: true, lastError: null });
         cycleUsageAdded = 0;
+        cycleStartedAt = Date.now();
 
         const tabId = await ensureDashboardTab();
         const tab = await chrome.tabs.get(tabId).catch(() => null);
