@@ -177,6 +177,30 @@ export default defineBackground(async () => {
       return false;
     }
 
+    // sidepanel 触发立即采集（欢迎页「开始采集」、手动刷新、重新打开 tab）
+    if (msg.type === 'TRIGGER_SCRAPE') {
+      (async () => {
+        // 即使当前是 manual 模式也允许触发一次
+        const state = await scrapeStateStorage.getValue();
+        if (state.isRunning) { sendResponse({ ok: false, reason: 'already running' }); return; }
+
+        await scrapeStateStorage.setValue({ ...state, isRunning: true, lastError: null });
+        cycleUsageAdded = 0;
+
+        const tabId = await ensureDashboardTab();
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (tab?.url && isUsageUrl(tab.url)) {
+          await chrome.tabs.reload(tabId);
+        } else {
+          await chrome.tabs.update(tabId, { url: DEFAULT_USAGE_URL });
+        }
+        // 同时重新调度 alarm（处理从 manual 切换到 auto 的情况）
+        await scheduleNextAlarm();
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
     return false;
   });
 
@@ -232,5 +256,15 @@ export default defineBackground(async () => {
   }
 
   await scheduleNextAlarm();
+
+  // 模式切换时自动重新调度（sidepanel 写 storage，background 监听响应）
+  scrapeModeStorage.watch(async (newMode) => {
+    if (newMode === 'auto') {
+      await scheduleNextAlarm();
+    } else {
+      await chrome.alarms.clear('scrape');
+    }
+  });
+
   console.log('[cursor-stats] background ready');
 });

@@ -40,7 +40,30 @@ export interface LocaleDict {
   colModel: string;
   colTokens: string;
   colCost: string;
-  // TODO: F04 新增采集状态文字后在此扩展
+  // F04 欢迎页
+  welcomeDesc: string;
+  welcomeFeature1: string;
+  welcomeFeature2: string;
+  welcomeFeature3: string;
+  welcomeStart: string;
+  welcomePrivacy: string;
+  // F04 Tab 关闭提醒
+  tabClosedBanner: string;
+  tabClosedDesc: string;
+  tabClosedReopen: string;
+  tabClosedNoRemind: string;
+  // F04 未登录提示
+  loginRequired: string;
+  loginRequiredDesc: string;
+  loginOpen: string;
+  // F04 采集状态栏
+  scrapeModeAuto: string;
+  scrapeModeManual: string;
+  scrapeNow: string;
+  statusCollecting: string;
+  statusIdle: string;
+  statusWaiting: string;
+  nextUpdate: string;
 }
 
 const dict: LocaleDict = {
@@ -73,6 +96,27 @@ const dict: LocaleDict = {
   colModel: '模型',
   colTokens: 'Tokens',
   colCost: '费用',
+  // F04
+  welcomeDesc: '自动采集 Cursor.com 用量与费用，完全本地存储',
+  welcomeFeature1: '用量与账单实时统计',
+  welcomeFeature2: '后台定时采集，指数衰减节省资源',
+  welcomeFeature3: '数据存储本地，开源透明',
+  welcomeStart: '开始采集',
+  welcomePrivacy: '数据仅存储在本地浏览器 · 开源项目',
+  tabClosedBanner: '采集标签页已关闭',
+  tabClosedDesc: '重新打开后台标签页以继续自动采集',
+  tabClosedReopen: '重新打开',
+  tabClosedNoRemind: '不再提示',
+  loginRequired: '请先登录 Cursor',
+  loginRequiredDesc: '未检测到登录状态，请登录后继续',
+  loginOpen: '打开登录页',
+  scrapeModeAuto: '自动',
+  scrapeModeManual: '手动',
+  scrapeNow: '立即采集',
+  statusCollecting: '采集中…',
+  statusIdle: '空闲',
+  statusWaiting: '等待登录',
+  nextUpdate: '下次',
 };
 
 export default dict;

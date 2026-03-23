@@ -50,6 +50,8 @@ export type ExtMessage =
   | { type: 'LOGIN_RESTORED' }
   // content → background：页面就绪，请求采集参数（background 通过 sendResponse 回复）
   | { type: 'PAGE_READY'; page: 'usage' | 'spending' }
+  // sidepanel → background：触发立即采集 / 重新调度 alarm
+  | { type: 'TRIGGER_SCRAPE' }
   // background → sidepanel：状态通知
   | { type: 'TAB_CLOSED' }
   | { type: 'TAB_OPENED';    tabId: number }

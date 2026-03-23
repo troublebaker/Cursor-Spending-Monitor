@@ -30,6 +30,27 @@ const dict: LocaleDict = {
   colModel: 'Model',
   colTokens: 'Tokens',
   colCost: 'Cost',
+  // F04
+  welcomeDesc: 'Track Cursor.com API usage & spending — fully local, no server',
+  welcomeFeature1: 'Real-time usage & billing stats',
+  welcomeFeature2: 'Background collection with smart backoff',
+  welcomeFeature3: 'All data stored locally, open source',
+  welcomeStart: 'Start Collecting',
+  welcomePrivacy: 'Data stored locally in your browser · Open source',
+  tabClosedBanner: 'Dashboard tab was closed',
+  tabClosedDesc: 'Reopen the background tab to continue auto-collection',
+  tabClosedReopen: 'Reopen',
+  tabClosedNoRemind: "Don't remind me",
+  loginRequired: 'Login Required',
+  loginRequiredDesc: 'Not logged in to Cursor. Please log in to continue.',
+  loginOpen: 'Open Login',
+  scrapeModeAuto: 'Auto',
+  scrapeModeManual: 'Manual',
+  scrapeNow: 'Collect now',
+  statusCollecting: 'Collecting…',
+  statusIdle: 'Idle',
+  statusWaiting: 'Waiting for login',
+  nextUpdate: 'Next',
 };
 
 export default dict;

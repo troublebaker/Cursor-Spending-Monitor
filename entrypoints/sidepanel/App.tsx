@@ -1,9 +1,17 @@
-import { useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import { useI18n } from '../../utils/i18n';
 import type { ThemeMode } from '../../hooks/useTheme';
 import type { SupportedLang } from '../../utils/i18n';
-import { MOCK_USAGE, MOCK_SPENDING } from '../../utils/mockData';
+import {
+  usageStorage,
+  spendingStorage,
+  scrapeStateStorage,
+  scrapeModeStorage,
+  onboardedStorage,
+  noTabReminderStorage,
+} from '../../utils/storage';
+import type { UsageRecord, SpendingData, ScrapeMode } from '../../utils/types';
 import { SummaryCards } from '../../components/SummaryCards';
 import { SpendingCard } from '../../components/SpendingCard';
 import { CollapseSection } from '../../components/CollapseSection';
@@ -11,6 +19,10 @@ import { DailyCallsChart } from '../../components/DailyCallsChart';
 import { DailyCostChart } from '../../components/DailyCostChart';
 import { ModelChart } from '../../components/ModelChart';
 import { RecordTable } from '../../components/RecordTable';
+import { WelcomePage } from '../../components/WelcomePage';
+import { StatusBar } from '../../components/StatusBar';
+
+// ─── 常量 ────────────────────────────────────────────────────────────────────
 
 const THEME_OPTIONS: { value: ThemeMode; icon: string }[] = [
   { value: 'light',  icon: '☀️' },
@@ -23,25 +35,143 @@ const LANG_OPTIONS: { value: SupportedLang; getLabel: (t: ReturnType<typeof useI
   { value: 'en',    getLabel: (t) => t.langEn },
 ];
 
+// ─── App ─────────────────────────────────────────────────────────────────────
+
 function App() {
   const { mode, setTheme } = useTheme();
   const { t, lang, setLang } = useI18n();
 
-  // F04 完成后将此处替换为 storage 数据
-  const usage = MOCK_USAGE;
-  const spending = MOCK_SPENDING;
+  // 真实数据（从 storage 读取）
+  const [usage, setUsage]       = useState<UsageRecord[]>([]);
+  const [spending, setSpending] = useState<SpendingData | null>(null);
 
-  const currentMonth = new Date().toISOString().slice(0, 7); // "2026-03"
+  // 采集状态
+  const [onboarded,   setOnboarded]   = useState<boolean | null>(null); // null = 初次加载中
+  const [scrapeMode,  setScrapeMode]  = useState<ScrapeMode>('auto');
+  const [isRunning,   setIsRunning]   = useState(false);
+  const [lastScrapeAt, setLastScrapeAt] = useState<string | null>(null);
+  const [noDataCount, setNoDataCount] = useState(0);
+
+  // UI 通知状态
+  const [tabClosed,      setTabClosed]      = useState(false);
+  const [loginRequired,  setLoginRequired]  = useState(false);
+
+  // ── 初始化 + storage watch ──────────────────────────────────────────────────
+  useEffect(() => {
+    // 读取初始值
+    Promise.all([
+      usageStorage.getValue(),
+      spendingStorage.getValue(),
+      onboardedStorage.getValue(),
+      scrapeModeStorage.getValue(),
+      scrapeStateStorage.getValue(),
+    ]).then(([u, s, ob, sm, ss]) => {
+      setUsage(u);
+      setSpending(s);
+      setOnboarded(ob);
+      setScrapeMode(sm);
+      setIsRunning(ss.isRunning);
+      setLastScrapeAt(ss.lastScrapeAt);
+      setNoDataCount(ss.noDataCount);
+    });
+
+    // 实时监听变化
+    const unwatchUsage    = usageStorage.watch(v    => setUsage(v ?? []));
+    const unwatchSpending = spendingStorage.watch(v => setSpending(v ?? null));
+    const unwatchState    = scrapeStateStorage.watch(v => {
+      if (!v) return;
+      setIsRunning(v.isRunning);
+      setLastScrapeAt(v.lastScrapeAt);
+      setNoDataCount(v.noDataCount);
+    });
+
+    return () => {
+      unwatchUsage();
+      unwatchSpending();
+      unwatchState();
+    };
+  }, []);
+
+  // ── background 消息监听 ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const listener = (msg: { type: string; [k: string]: unknown }) => {
+      if (msg.type === 'TAB_CLOSED')      setTabClosed(true);
+      if (msg.type === 'LOGIN_REQUIRED')  setLoginRequired(true);
+      if (msg.type === 'LOGIN_RESTORED')  setLoginRequired(false);
+      if (msg.type === 'SCRAPE_STATUS') {
+        setIsRunning(msg.isRunning as boolean);
+        setLastScrapeAt(msg.lastScrapeAt as string | null);
+      }
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
+
+  // ── 月度计算 ────────────────────────────────────────────────────────────────
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const monthRecords = useMemo(
-    () => usage.filter((r) => r.dt.startsWith(currentMonth)),
+    () => usage.filter(r => r.dt.startsWith(currentMonth)),
     [usage, currentMonth],
   );
-
   const monthlyCost = useMemo(
-    () => monthRecords.filter((r) => r.type === 'On-Demand').reduce((s, r) => s + r.cost, 0),
+    () => monthRecords.filter(r => r.type === 'On-Demand').reduce((s, r) => s + r.cost, 0),
     [monthRecords],
   );
 
+  // ── 操作处理 ────────────────────────────────────────────────────────────────
+  const handleStart = async () => {
+    await onboardedStorage.setValue(true);
+    await scrapeModeStorage.setValue('auto');
+    setOnboarded(true);
+    setScrapeMode('auto');
+    chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
+  };
+
+  const handleModeChange = async (newMode: ScrapeMode) => {
+    setScrapeMode(newMode);
+    await scrapeModeStorage.setValue(newMode);
+    // background 通过 watch scrapeModeStorage 自动重新调度 alarm
+  };
+
+  const handleScrapeNow = () => {
+    chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
+  };
+
+  const handleReopenTab = () => {
+    setTabClosed(false);
+    chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
+  };
+
+  const handleNoRemind = async () => {
+    await noTabReminderStorage.setValue(true);
+    setTabClosed(false);
+  };
+
+  const handleOpenLogin = () => {
+    chrome.tabs.create({ url: 'https://cursor.com/login', active: true });
+  };
+
+  // ── 渲染 ────────────────────────────────────────────────────────────────────
+
+  // 初次加载中
+  if (onboarded === null) {
+    return (
+      <div className="min-h-screen bg-white dark:bg-zinc-900 flex items-center justify-center text-zinc-400 text-sm">
+        {t.loading}
+      </div>
+    );
+  }
+
+  // 未引导 → 欢迎页
+  if (!onboarded) {
+    return (
+      <div className="min-h-screen bg-white dark:bg-zinc-900">
+        <WelcomePage t={t} onStart={handleStart} />
+      </div>
+    );
+  }
+
+  // 主仪表盘
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-sans text-sm">
 
@@ -86,36 +216,90 @@ function App() {
         </div>
       </header>
 
+      {/* ── 状态栏 ── */}
+      <StatusBar
+        t={t}
+        isRunning={isRunning}
+        loginRequired={loginRequired}
+        lastScrapeAt={lastScrapeAt}
+        scrapeMode={scrapeMode}
+        noDataCount={noDataCount}
+        onModeChange={handleModeChange}
+        onScrapeNow={handleScrapeNow}
+      />
+
+      {/* ── Tab 关闭提醒 ── */}
+      {tabClosed && (
+        <div className="mx-3 mt-3 rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3">
+          <p className="font-medium text-amber-800 dark:text-amber-300 text-xs">{t.tabClosedBanner}</p>
+          <p className="text-amber-600 dark:text-amber-400 text-xs mt-0.5 mb-2">{t.tabClosedDesc}</p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleReopenTab}
+              className="px-3 py-1 text-xs bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
+            >
+              {t.tabClosedReopen}
+            </button>
+            <button
+              onClick={handleNoRemind}
+              className="px-3 py-1 text-xs text-amber-600 dark:text-amber-400 hover:underline"
+            >
+              {t.tabClosedNoRemind}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 未登录提示 ── */}
+      {loginRequired && (
+        <div className="mx-3 mt-3 rounded-xl border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-3">
+          <p className="font-medium text-red-800 dark:text-red-300 text-xs">{t.loginRequired}</p>
+          <p className="text-red-600 dark:text-red-400 text-xs mt-0.5 mb-2">{t.loginRequiredDesc}</p>
+          <button
+            onClick={handleOpenLogin}
+            className="px-3 py-1 text-xs bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors"
+          >
+            {t.loginOpen}
+          </button>
+        </div>
+      )}
+
       {/* ── 摘要卡片 ── */}
       <SummaryCards
         monthlyCost={monthlyCost}
         monthlyCalls={monthRecords.length}
-        lastUpdated={spending.scrapedAt}
+        lastUpdated={spending?.scrapedAt ?? null}
         t={t}
       />
 
-      {/* ── 额度进度条 ── */}
-      <SpendingCard spending={spending} t={t} />
+      {/* ── 额度进度条（有 spending 数据才显示） ── */}
+      {spending && <SpendingCard spending={spending} t={t} />}
 
-      {/* ── 每日调用次数（默认展开） ── */}
-      <CollapseSection title={t.dailyCalls} defaultOpen>
-        <DailyCallsChart records={monthRecords} t={t} />
-      </CollapseSection>
+      {/* ── 数据为空时提示 ── */}
+      {usage.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-zinc-400 text-sm gap-2">
+          <span className="text-3xl">🕐</span>
+          <span>{t.statusCollecting}</span>
+        </div>
+      )}
 
-      {/* ── 每日费用趋势（折叠，懒渲染） ── */}
-      <CollapseSection title={t.dailyCost}>
-        <DailyCostChart records={monthRecords} t={t} />
-      </CollapseSection>
-
-      {/* ── 模型分布 Top 12（折叠，懒渲染） ── */}
-      <CollapseSection title={t.topModels}>
-        <ModelChart records={monthRecords} t={t} />
-      </CollapseSection>
-
-      {/* ── 明细记录（折叠） ── */}
-      <CollapseSection title={t.detailTable}>
-        <RecordTable records={monthRecords} t={t} />
-      </CollapseSection>
+      {/* ── 图表区（有数据才渲染） ── */}
+      {usage.length > 0 && (
+        <>
+          <CollapseSection title={t.dailyCalls} defaultOpen>
+            <DailyCallsChart records={monthRecords} t={t} />
+          </CollapseSection>
+          <CollapseSection title={t.dailyCost}>
+            <DailyCostChart records={monthRecords} t={t} />
+          </CollapseSection>
+          <CollapseSection title={t.topModels}>
+            <ModelChart records={monthRecords} t={t} />
+          </CollapseSection>
+          <CollapseSection title={t.detailTable}>
+            <RecordTable records={monthRecords} t={t} />
+          </CollapseSection>
+        </>
+      )}
 
     </div>
   );
