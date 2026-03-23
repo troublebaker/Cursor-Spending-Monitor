@@ -232,6 +232,13 @@ export default defineBackground(async () => {
       const state = await scrapeStateStorage.getValue();
       await scrapeStateStorage.setValue({ ...state, isRunning: false });
       broadcastToContexts({ type: 'LOGIN_REQUIRED' });
+    } else if (tab.url.includes('/dashboard/')) {
+      // 用户完成登录后 tab 跳回 dashboard：通知侧边栏并立刻触发一次采集
+      const state = await scrapeStateStorage.getValue();
+      if (!state.isRunning) {
+        broadcastToContexts({ type: 'LOGIN_RESTORED' });
+        await startScrapeCycle();
+      }
     }
   });
 

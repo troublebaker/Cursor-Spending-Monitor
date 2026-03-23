@@ -72,6 +72,18 @@ export interface LocaleDict {
   scrapeNoNew: string;
   scrapeFailed: string;
   scrapeNewRecords: string;  // 单位词，如 "新记录"
+  // Debug Panel
+  debugTitle: string;
+  debugRecords: string;
+  debugFirstDt: string;
+  debugCurrentMonth: string;
+  debugMonthRecords: string;
+  debugSpending: string;
+  debugNoSpending: string;
+  debugClearData: string;
+  debugClearConfirm: string;
+  debugCopyJson: string;
+  debugCopied: string;
 }
 
 const dict: LocaleDict = {
@@ -132,6 +144,18 @@ const dict: LocaleDict = {
   scrapeNoNew: '已是最新',
   scrapeFailed: '采集失败',
   scrapeNewRecords: '条新记录',
+  // Debug Panel
+  debugTitle: '调试 / 数据检查',
+  debugRecords: '条记录',
+  debugFirstDt: '最新记录时间',
+  debugCurrentMonth: '当前月份',
+  debugMonthRecords: '本月记录数',
+  debugSpending: '账单信息',
+  debugNoSpending: '暂无',
+  debugClearData: '清除所有数据',
+  debugClearConfirm: '确认清除？此操作不可恢复',
+  debugCopyJson: '复制 JSON',
+  debugCopied: '已复制',
 };
 
 export default dict;

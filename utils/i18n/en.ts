@@ -58,6 +58,18 @@ const dict: LocaleDict = {
   scrapeNoNew: 'Already up to date',
   scrapeFailed: 'Collection failed',
   scrapeNewRecords: 'new records',
+  // Debug Panel
+  debugTitle: 'Debug / Data Inspector',
+  debugRecords: 'records',
+  debugFirstDt: 'Latest record time',
+  debugCurrentMonth: 'Current month',
+  debugMonthRecords: 'Month records',
+  debugSpending: 'Spending info',
+  debugNoSpending: 'None yet',
+  debugClearData: 'Clear all data',
+  debugClearConfirm: 'Confirm clear? This cannot be undone',
+  debugCopyJson: 'Copy JSON',
+  debugCopied: 'Copied!',
 };
 
 export default dict;

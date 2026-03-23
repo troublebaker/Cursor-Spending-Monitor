@@ -21,6 +21,7 @@ import { ModelChart } from '../../components/ModelChart';
 import { RecordTable } from '../../components/RecordTable';
 import { WelcomePage } from '../../components/WelcomePage';
 import { StatusBar } from '../../components/StatusBar';
+import { DebugPanel } from '../../components/DebugPanel';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -138,11 +139,30 @@ function App() {
   // isRunning 变化时执行，usage.length 在 timeout 内读取
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning]);
-  const currentMonth = new Date().toISOString().slice(0, 7);
+
+  // ── 月度计算 ────────────────────────────────────────────────────────────────
+  // currentMonth 使用本地时间（避免时区边界误差）
+  const currentMonth = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
   const monthRecords = useMemo(
-    () => usage.filter(r => r.dt.startsWith(currentMonth)),
+    () => usage.filter(r => {
+      // 快速路径：ISO 格式 "2026-03-..."
+      if (r.dt.startsWith(currentMonth)) return true;
+      // 降级路径：解析后再比较月份（兼容 cursor.com 其他日期文本格式）
+      const d = new Date(r.dt);
+      if (isNaN(d.getTime())) return false;
+      return d.getFullYear() === new Date().getFullYear()
+        && d.getMonth() === new Date().getMonth();
+    }),
     [usage, currentMonth],
   );
+
+  // 图表数据：优先用当月，若当月为空则显示全部记录（帮助调试）
+  const displayRecords = monthRecords.length > 0 ? monthRecords : usage;
+
   const monthlyCost = useMemo(
     () => monthRecords.filter(r => r.type.toLowerCase().includes('on-demand')).reduce((s, r) => s + r.cost, 0),
     [monthRecords],
@@ -331,21 +351,34 @@ function App() {
       {usage.length > 0 && (
         <>
           <CollapseSection title={t.dailyCalls} defaultOpen>
-            <DailyCallsChart records={monthRecords} t={t} />
+            <DailyCallsChart records={displayRecords} t={t} />
           </CollapseSection>
           <CollapseSection title={t.dailyCost}>
-            <DailyCostChart records={monthRecords} t={t} />
+            <DailyCostChart records={displayRecords} t={t} />
           </CollapseSection>
           <CollapseSection title={t.topModels}>
-            <ModelChart records={monthRecords} t={t} />
+            <ModelChart records={displayRecords} t={t} />
           </CollapseSection>
           <CollapseSection title={t.detailTable}>
-            <RecordTable records={monthRecords} t={t} />
+            <RecordTable records={displayRecords} t={t} />
           </CollapseSection>
         </>
       )}
 
       </>)}
+
+      {/* ── 调试面板（始终可见，默认折叠） ── */}
+      <DebugPanel
+        t={t}
+        usage={usage}
+        spending={spending}
+        currentMonth={currentMonth}
+        monthRecordsCount={monthRecords.length}
+        onDataCleared={() => {
+          setUsage([]);
+          setSpending(null);
+        }}
+      />
 
     </div>
   );
