@@ -167,11 +167,11 @@ function App() {
     );
   }
 
-  // 未引导 → 欢迎页
+  // 未引导 → 欢迎页（含语言选择器）
   if (!onboarded) {
     return (
       <div className="min-h-screen bg-white dark:bg-zinc-900">
-        <WelcomePage t={t} onStart={handleStart} />
+        <WelcomePage t={t} lang={lang} onLangChange={setLang} onStart={handleStart} />
       </div>
     );
   }
@@ -255,19 +255,32 @@ function App() {
         </div>
       )}
 
-      {/* ── 未登录提示 ── */}
+      {/* ── 未登录：全屏大提示（遮盖内容区，保留顶栏） ── */}
       {loginRequired && (
-        <div className="mx-3 mt-3 rounded-xl border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-3">
-          <p className="font-medium text-red-800 dark:text-red-300 text-xs">{t.loginRequired}</p>
-          <p className="text-red-600 dark:text-red-400 text-xs mt-0.5 mb-2">{t.loginRequiredDesc}</p>
+        <div className="flex flex-col items-center justify-center px-6 py-12 min-h-[calc(100vh-48px)]">
+          <div className="w-20 h-20 rounded-2xl bg-red-50 dark:bg-red-900/30 flex items-center justify-center mb-6 text-4xl">
+            🔐
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-3 text-center">
+            {t.loginRequired}
+          </h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center mb-8 leading-relaxed max-w-xs">
+            {t.loginRequiredDesc}
+          </p>
           <button
             onClick={handleOpenLogin}
-            className="px-3 py-1 text-xs bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors"
+            className="w-full max-w-xs py-3.5 bg-brand hover:bg-brand-hover text-white font-semibold rounded-xl transition-colors text-sm shadow-sm mb-4"
           >
             {t.loginOpen}
           </button>
+          <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center">
+            {t.loginNote}
+          </p>
         </div>
       )}
+
+      {/* ── 以下内容仅在已登录时渲染 ── */}
+      {!loginRequired && (<>
 
       {/* ── 摘要卡片 ── */}
       <SummaryCards
@@ -305,6 +318,8 @@ function App() {
           </CollapseSection>
         </>
       )}
+
+      </>)}
 
     </div>
   );

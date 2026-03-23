@@ -1,9 +1,18 @@
 import type { LocaleDict } from '../utils/i18n/zh-CN';
+import type { SupportedLang } from '../utils/i18n';
+import { detectBrowserLang } from '../utils/i18n';
 
 interface Props {
   t: LocaleDict;
+  lang: SupportedLang | '';
+  onLangChange: (lang: SupportedLang) => void;
   onStart: () => void;
 }
+
+const LANG_OPTIONS: { value: SupportedLang; label: string }[] = [
+  { value: 'zh-CN', label: '中文' },
+  { value: 'en',    label: 'English' },
+];
 
 const FEATURES = (t: LocaleDict) => [
   { icon: '📊', text: t.welcomeFeature1 },
@@ -11,9 +20,30 @@ const FEATURES = (t: LocaleDict) => [
   { icon: '🔒', text: t.welcomeFeature3 },
 ];
 
-export function WelcomePage({ t, onStart }: Props) {
+export function WelcomePage({ t, lang, onLangChange, onStart }: Props) {
+  // '' 表示跟随浏览器，解析出实际显示语言用于高亮选择器
+  const activeLang: SupportedLang = lang === '' ? detectBrowserLang() : lang;
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen px-6 py-10 bg-white dark:bg-zinc-900">
+
+      {/* 语言选择器（顶部，浏览器语言预选） */}
+      <div className="flex gap-2 mb-8 self-end">
+        {LANG_OPTIONS.map(({ value, label }) => (
+          <button
+            key={value}
+            onClick={() => onLangChange(value)}
+            className={[
+              'px-3 py-1 text-xs rounded-full border transition-colors',
+              activeLang === value
+                ? 'bg-brand border-brand text-white font-semibold'
+                : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-brand hover:text-brand',
+            ].join(' ')}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {/* 图标 */}
       <div className="w-16 h-16 mb-5 rounded-2xl bg-brand flex items-center justify-center shadow-lg">

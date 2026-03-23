@@ -56,6 +56,7 @@ export interface LocaleDict {
   loginRequired: string;
   loginRequiredDesc: string;
   loginOpen: string;
+  loginNote: string;         // 登录后采集自动恢复
   // F04 采集状态栏
   scrapeModeAuto: string;
   scrapeModeManual: string;
@@ -109,7 +110,8 @@ const dict: LocaleDict = {
   tabClosedNoRemind: '不再提示',
   loginRequired: '请先登录 Cursor',
   loginRequiredDesc: '未检测到登录状态，请登录后继续',
-  loginOpen: '打开登录页',
+  loginOpen: '打开 Cursor 登录页',
+  loginNote: '登录成功后，数据采集将自动恢复',
   scrapeModeAuto: '自动',
   scrapeModeManual: '手动',
   scrapeNow: '立即采集',

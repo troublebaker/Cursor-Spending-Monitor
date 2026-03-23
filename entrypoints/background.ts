@@ -167,16 +167,11 @@ export default defineBackground(async () => {
       return true;
     }
 
-    // 未登录 → 告知侧边栏，暂停调度，聚焦 tab 引导用户登录
+    // 未登录 → 告知侧边栏，暂停调度
     if (msg.type === 'NOT_LOGGED_IN') {
       (async () => {
         const state = await scrapeStateStorage.getValue();
         await scrapeStateStorage.setValue({ ...state, isRunning: false });
-        // 聚焦 tab，让用户看到登录页
-        const tabId = await dashboardTabIdStorage.getValue();
-        if (tabId !== null) {
-          chrome.tabs.update(tabId, { active: true }).catch(() => {});
-        }
         broadcastToContexts({ type: 'LOGIN_REQUIRED' });
       })();
       return false;
@@ -236,8 +231,6 @@ export default defineBackground(async () => {
     if (isAuthRedirect(tab.url)) {
       const state = await scrapeStateStorage.getValue();
       await scrapeStateStorage.setValue({ ...state, isRunning: false });
-      // 聚焦 tab，引导用户完成登录
-      chrome.tabs.update(tabId, { active: true }).catch(() => {});
       broadcastToContexts({ type: 'LOGIN_REQUIRED' });
     }
   });

@@ -21,8 +21,8 @@ const langStorage = storage.defineItem<SupportedLang | ''>('local:langOverride',
   fallback: '',
 });
 
-/** 读取浏览器默认语言 */
-function detectBrowserLang(): SupportedLang {
+/** 读取浏览器默认语言（可由组件直接调用） */
+export function detectBrowserLang(): SupportedLang {
   try {
     const l = chrome.i18n.getUILanguage();
     if (LOCALES[l]) return l as SupportedLang;
