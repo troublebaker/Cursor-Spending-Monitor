@@ -6,6 +6,8 @@ const dict: LocaleDict = {
   themeLight: 'Light',
   themeDark: 'Dark',
   themeSystem: 'System',
+  langZh: '中文',
+  langEn: 'English',
 };
 
 export default dict;

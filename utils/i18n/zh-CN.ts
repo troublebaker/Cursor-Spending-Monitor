@@ -10,6 +10,9 @@ export interface LocaleDict {
   themeLight: string;
   themeDark: string;
   themeSystem: string;
+  // 语言切换
+  langZh: string;
+  langEn: string;
   // TODO: F03 新增仪表盘文字后在此扩展
 }
 
@@ -19,6 +22,8 @@ const dict: LocaleDict = {
   themeLight: '浅色',
   themeDark: '深色',
   themeSystem: '跟随系统',
+  langZh: '中文',
+  langEn: 'English',
 };
 
 export default dict;
