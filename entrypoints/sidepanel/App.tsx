@@ -22,6 +22,7 @@ import { RecordTable } from '../../components/RecordTable';
 import { WelcomePage } from '../../components/WelcomePage';
 import { StatusBar } from '../../components/StatusBar';
 import { DebugPanel } from '../../components/DebugPanel';
+import { TestPanel } from '../../components/TestPanel';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -57,9 +58,12 @@ function App() {
   const [tabClosed,      setTabClosed]      = useState(false);
   const [loginRequired,  setLoginRequired]  = useState(false);
   // 采集结果（5 秒后自动清除）
-  const [lastResult, setLastResult] = useState<{ ok: boolean; added: number } | null>(null);
+  const [lastResult, setLastResult] = useState<{ ok: boolean; added: number; errorType?: string } | null>(null);
   const prevIsRunningRef  = useRef(false);
   const prevUsageLengthRef = useRef(0);
+
+  // 测试面板开关
+  const [showTest, setShowTest] = useState(false);
 
   // ── 初始化 + storage watch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -81,10 +85,7 @@ function App() {
       // 恢复持久化的登录等待状态（侧边栏重新打开时也能正确显示/隐藏提示）
       setLoginRequired(ss.loginRequired ?? false);
 
-      // 侧边栏打开时自动触发一次采集（已引导 + 当前未在采集中 + 非登录等待）
-      if (ob && !ss.isRunning && !ss.loginRequired) {
-        chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
-      }
+      // 注：打开侧边栏时不再自动触发采集，改为手动点击「立即采集」或 auto 模式 alarm 触发
     });
 
     // 实时监听变化
@@ -115,6 +116,16 @@ function App() {
       if (msg.type === 'SCRAPE_STATUS') {
         setIsRunning(msg.isRunning as boolean);
         setLastScrapeAt(msg.lastScrapeAt as string | null);
+        // 新采集开始 → 清除上次错误结果
+        if (msg.isRunning) setLastResult(null);
+      }
+      if (msg.type === 'SCRAPE_FAILED') {
+        setIsRunning(false);
+        // 直接设置错误结果，优先于 isRunning transition effect 中的成功检测
+        setLastResult({ ok: false, added: 0, errorType: msg.errorType as string });
+        // 10 秒后自动清除错误提示
+        const id = setTimeout(() => setLastResult(null), 10_000);
+        return () => clearTimeout(id);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -129,9 +140,13 @@ function App() {
     if (wasRunning && !isRunning) {
       // 稍等 500ms 让 usageStorage.watch 更新 usage 后再对比
       const id = setTimeout(() => {
-        const added = Math.max(0, usage.length - prevUsageLengthRef.current);
-        setLastResult({ ok: true, added });
-        prevUsageLengthRef.current = usage.length;
+        setLastResult(prev => {
+          // SCRAPE_FAILED 消息已设置错误结果，不覆盖
+          if (prev?.ok === false) return prev;
+          const added = Math.max(0, usage.length - prevUsageLengthRef.current);
+          prevUsageLengthRef.current = usage.length;
+          return { ok: true, added };
+        });
         const dismissId = setTimeout(() => setLastResult(null), 5000);
         return () => clearTimeout(dismissId);
       }, 500);
@@ -191,6 +206,18 @@ function App() {
     chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
   };
 
+  const handleAbort = () => {
+    chrome.runtime.sendMessage({ type: 'CANCEL_SCRAPE' }).catch(() => {});
+  };
+
+  const handleClearData = async () => {
+    await usageStorage.setValue([]);
+    await spendingStorage.setValue(null);
+    setUsage([]);
+    setSpending(null);
+    setLastResult(null);
+  };
+
   const handleReopenTab = () => {
     setTabClosed(false);
     chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
@@ -206,6 +233,16 @@ function App() {
       // background 未响应时降级：直接打开 usage URL（未登录会跳 auth，登后跳回触发 content script）
       chrome.tabs.create({ url: 'https://cursor.com/cn/dashboard/usage', active: true });
     });
+  };
+
+  const handleOpenTest = async () => {
+    // 进入测试模式前先切换为手动，暂停 alarm 驱动的自动采集
+    await handleModeChange('manual');
+    setShowTest(true);
+  };
+
+  const handleCloseTest = () => {
+    setShowTest(false);
   };
 
   // ── 渲染 ────────────────────────────────────────────────────────────────────
@@ -231,6 +268,19 @@ function App() {
   // 主仪表盘
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-sans text-sm">
+
+      {/* ── 测试面板（全屏覆盖，顶栏不显示） ── */}
+      {showTest && (
+        <TestPanel
+          usage={usage}
+          spending={spending}
+          status={{ isRunning, lastScrapeAt, noDataCount, loginRequired, scrapeMode }}
+          onClose={handleCloseTest}
+        />
+      )}
+
+      {/* ── 以下内容在测试面板打开时隐藏 ── */}
+      {!showTest && (<>
 
       {/* ── 顶栏 ── */}
       <header className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-700 sticky top-0 bg-white dark:bg-zinc-900 z-10">
@@ -270,6 +320,15 @@ function App() {
               </button>
             ))}
           </div>
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
+          {/* 测试面板入口 */}
+          <button
+            onClick={handleOpenTest}
+            title="打开测试面板（自动暂停采集）"
+            className="w-7 h-7 flex items-center justify-center rounded-md text-base bg-zinc-100 hover:bg-amber-100 dark:bg-zinc-800 dark:hover:bg-amber-900/40 transition-colors"
+          >
+            ⚗️
+          </button>
         </div>
       </header>
 
@@ -284,6 +343,8 @@ function App() {
         lastResult={lastResult}
         onModeChange={handleModeChange}
         onScrapeNow={handleScrapeNow}
+        onAbort={handleAbort}
+        onClearData={handleClearData}
       />
 
       {/* ── Tab 关闭提醒 ── */}
@@ -386,6 +447,8 @@ function App() {
           setSpending(null);
         }}
       />
+
+      </>)}  {/* end !showTest */}
 
     </div>
   );

@@ -34,22 +34,22 @@ function toSpendingUrl(url: string): string {
 let cycleUsageAdded = 0;
 /** 当前周期开始时间（ms），用于检测卡死超时 */
 let cycleStartedAt = 0;
-const CYCLE_TIMEOUT_MS = 30_000;
+const CYCLE_TIMEOUT_MS = 15_000;
 
-/** 若上一个周期已超时（>30s 未完成），强制重置 isRunning */
+/** 若上一个周期已超时（>15s 未完成），强制重置 isRunning */
 async function checkAndResetStaleCycle(): Promise<void> {
   const state = await scrapeStateStorage.getValue();
   if (state.isRunning && cycleStartedAt > 0 && Date.now() - cycleStartedAt > CYCLE_TIMEOUT_MS) {
-    console.log('[cursor-stats] stale cycle detected (>30s), force resetting');
+    console.log('[cursor-stats] stale cycle detected (>15s), force resetting');
     await scrapeStateStorage.setValue({
       ...state,
       isRunning: false,
-      lastError: 'scrape timeout (30s)',
+      lastError: 'scrape timeout (15s)',
     });
     cycleStartedAt = 0;
     cycleUsageAdded = 0;
     await scheduleNextAlarm();
-    broadcastToContexts({ type: 'SCRAPE_STATUS', isRunning: false });
+    broadcastToContexts({ type: 'SCRAPE_FAILED', errorType: 'timeout', error: 'scrape timeout (15s)' });
   }
 }
 
@@ -145,6 +145,25 @@ function broadcastToContexts(msg: object): void {
   });
 }
 
+/**
+ * 直接查询所有打开的 Tab，找第一个 spending 页面。
+ * 用于 spending 测试消息路由，不依赖 dashboardTabIdStorage
+ * （解决 isRunning=true 时 tabId 未更新的问题）。
+ */
+async function findSpendingTab(): Promise<number | null> {
+  const patterns = [
+    'https://cursor.com/*/dashboard/spending*',
+    'https://cursor.com/dashboard/spending*',
+    'https://www.cursor.com/*/dashboard/spending*',
+    'https://www.cursor.com/dashboard/spending*',
+  ];
+  for (const url of patterns) {
+    const tabs = await chrome.tabs.query({ url }).catch(() => [] as chrome.tabs.Tab[]);
+    if (tabs.length > 0 && tabs[0].id !== undefined) return tabs[0].id;
+  }
+  return null;
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 export default defineBackground(async () => {
@@ -225,13 +244,33 @@ export default defineBackground(async () => {
       return true;
     }
 
-    // 采集报错 → 重置状态 → 重新调度
+    // 采集报错 → 重置状态 → 广播到侧边栏 → 重新调度
     if (msg.type === 'SCRAPE_ERROR') {
       (async () => {
         cycleStartedAt = 0;
         const state = await scrapeStateStorage.getValue();
         await scrapeStateStorage.setValue({ ...state, isRunning: false, lastError: msg.error });
+        const errorType = (msg.errorType ?? 'generic') as 'logout' | 'timeout' | 'cancelled' | 'generic';
+        broadcastToContexts({ type: 'SCRAPE_FAILED', errorType, error: msg.error ?? '' });
         await scheduleNextAlarm();
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
+    // 用户手动中止采集 → 导航后台 tab 离开 dashboard（杀死 content script）→ 广播
+    if (msg.type === 'CANCEL_SCRAPE') {
+      (async () => {
+        cycleStartedAt = 0;
+        cycleUsageAdded = 0;
+        const state = await scrapeStateStorage.getValue();
+        await scrapeStateStorage.setValue({ ...state, isRunning: false, lastError: 'cancelled' });
+        // 导航后台 tab 到空白页，终止 content script 上下文
+        const savedId = await dashboardTabIdStorage.getValue();
+        if (savedId !== null) {
+          chrome.tabs.update(savedId, { url: 'about:blank' }).catch(() => {});
+        }
+        broadcastToContexts({ type: 'SCRAPE_FAILED', errorType: 'cancelled', error: '手动中止采集' });
         sendResponse({ ok: true });
       })();
       return true;
@@ -291,6 +330,130 @@ export default defineBackground(async () => {
       return true;
     }
 
+    // 测试：转发 hover 命令到 dashboard tab 里的 content script
+    if (msg.type === 'TEST_TOKEN_HOVER') {
+      (async () => {
+        const tabId = await dashboardTabIdStorage.getValue();
+        if (tabId === null) {
+          broadcastToContexts({
+            type: 'TOKEN_HOVER_RESULT',
+            html: null, triggerText: '', parsed: null, portalCount: 0,
+            error: '没有活跃的 dashboard tab，请先打开 cursor.com/dashboard/usage',
+          });
+          sendResponse({ ok: false });
+          return;
+        }
+        chrome.tabs.sendMessage(tabId, { type: 'TEST_TOKEN_HOVER' }).catch((e: unknown) => {
+          broadcastToContexts({
+            type: 'TOKEN_HOVER_RESULT',
+            html: null, triggerText: '', parsed: null, portalCount: 0,
+            error: `tabs.sendMessage 失败: ${String(e)}`,
+          });
+        });
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
+    // 测试结果：从 content script 收到后广播给侧边栏
+    if (msg.type === 'TOKEN_HOVER_RESULT') {
+      broadcastToContexts(msg);
+      return false;
+    }
+
+    // 测试：转发用户信息查询到 dashboard tab
+    if (msg.type === 'TEST_USER_INFO') {
+      (async () => {
+        const tabId = await dashboardTabIdStorage.getValue();
+        if (tabId === null) {
+          broadcastToContexts({ type: 'USER_INFO_RESULT', name: '', plan: '', error: '没有活跃的 dashboard tab，请先打开 cursor.com 任意 dashboard 页' });
+          sendResponse({ ok: false });
+          return;
+        }
+        chrome.tabs.sendMessage(tabId, { type: 'TEST_USER_INFO' }).catch((e: unknown) => {
+          broadcastToContexts({ type: 'USER_INFO_RESULT', name: '', plan: '', error: `tabs.sendMessage 失败: ${String(e)}` });
+        });
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
+    if (msg.type === 'USER_INFO_RESULT') {
+      broadcastToContexts(msg);
+      return false;
+    }
+
+    // ── Spending 页面测试：转发到 dashboard tab ────────────────────────────────
+    const SPENDING_TEST_MSGS = [
+      'TEST_SPENDING_PLAN', 'TEST_INCLUDED_USAGE', 'TEST_ON_DEMAND',
+    ] as const;
+    type SpendingTestType = typeof SPENDING_TEST_MSGS[number];
+
+    if (SPENDING_TEST_MSGS.includes(msg.type as SpendingTestType)) {
+      (async () => {
+        // 优先直接查 spending tab（不依赖 dashboardTabId 是否已更新）
+        const spendingTabId = await findSpendingTab();
+        const tabId = spendingTabId ?? await dashboardTabIdStorage.getValue();
+        const errorResultType = {
+          TEST_SPENDING_PLAN:    'SPENDING_PLAN_RESULT',
+          TEST_INCLUDED_USAGE:   'INCLUDED_USAGE_RESULT',
+          TEST_ON_DEMAND:        'ON_DEMAND_RESULT',
+        }[msg.type as SpendingTestType];
+
+        if (tabId === null) {
+          broadcastToContexts({ type: errorResultType, error: '未找到 spending tab，请先打开 cursor.com/*/dashboard/spending' } as never);
+          sendResponse({ ok: false });
+          return;
+        }
+        chrome.tabs.sendMessage(tabId, msg).catch((e: unknown) => {
+          broadcastToContexts({ type: errorResultType, error: `tabs.sendMessage 失败: ${String(e)}` } as never);
+        });
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
+    const SPENDING_RESULT_MSGS = [
+      'SPENDING_PLAN_RESULT', 'INCLUDED_USAGE_RESULT', 'ON_DEMAND_RESULT', 'INTERRUPT_RESULT',
+    ] as const;
+    if (SPENDING_RESULT_MSGS.includes(msg.type as typeof SPENDING_RESULT_MSGS[number])) {
+      broadcastToContexts(msg);
+      return false;
+    }
+
+    // ── 中断模拟测试：转发到任意可用的 dashboard tab ───────────────────────────
+    if (msg.type === 'TEST_INTERRUPT') {
+      (async () => {
+        const spendingTabId = await findSpendingTab();
+        const tabId = spendingTabId ?? await dashboardTabIdStorage.getValue();
+        if (tabId === null) {
+          broadcastToContexts({
+            type: 'INTERRUPT_RESULT',
+            scenario:      (msg as { scenario: string }).scenario,
+            dataCollected: 0,
+            interrupted:   false,
+            reason:        '未找到任何 dashboard tab，请先打开 cursor.com dashboard',
+            checks:        {},
+          } as never);
+          sendResponse({ ok: false });
+          return;
+        }
+        chrome.tabs.sendMessage(tabId, msg).catch((e: unknown) => {
+          broadcastToContexts({
+            type: 'INTERRUPT_RESULT',
+            scenario:      (msg as { scenario: string }).scenario,
+            dataCollected: 0,
+            interrupted:   false,
+            reason:        `tabs.sendMessage 失败: ${String(e)}`,
+            checks:        {},
+            error:         String(e),
+          } as never);
+        });
+        sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
     return false;
   });
 
@@ -309,6 +472,8 @@ export default defineBackground(async () => {
     const state = await scrapeStateStorage.getValue();
     if (state.isRunning) {
       await scrapeStateStorage.setValue({ ...state, isRunning: false });
+      // 采集进行中被关闭 → 广播 SCRAPE_FAILED 让侧边栏显示错误，而不是静默重置
+      broadcastToContexts({ type: 'SCRAPE_FAILED', errorType: 'cancelled', error: '后台标签页被关闭，采集已中止' });
       await scheduleNextAlarm();
     }
   });
@@ -338,11 +503,13 @@ export default defineBackground(async () => {
         isRunning: false,
         loginRequired: loginRelated,
       });
+      // 退出登录/导航离开 → 统一广播 SCRAPE_FAILED（errorType: 'logout'）
+      // content script 上下文已被 navigation 销毁，不会再发任何消息，必须由 background 兜底
+      broadcastToContexts({ type: 'SCRAPE_FAILED', errorType: 'logout', error: '采集中途离开 dashboard（退出登录或跳转）' });
       if (loginRelated) {
-        broadcastToContexts({ type: 'LOGIN_REQUIRED' });
         await scheduleLoginRetry();
       } else {
-        broadcastToContexts({ type: 'SCRAPE_STATUS', isRunning: false });
+        await scheduleNextAlarm();
       }
       console.log(`[cursor-stats] scrape aborted: tab ${tabId} left dashboard (login=${loginRelated})`);
       return;

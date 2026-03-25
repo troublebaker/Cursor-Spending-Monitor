@@ -9,9 +9,11 @@ interface Props {
   lastScrapeAt: string | null;
   scrapeMode: ScrapeMode;
   noDataCount: number;
-  lastResult: { ok: boolean; added: number } | null;
+  lastResult: { ok: boolean; added: number; errorType?: string } | null;
   onModeChange: (mode: ScrapeMode) => void;
   onScrapeNow: () => void;
+  onAbort: () => void;
+  onClearData: () => void;
 }
 
 function timeAgoShort(iso: string): string {
@@ -36,13 +38,16 @@ function getStageText(elapsedSec: number, t: LocaleDict): string {
 
 export function StatusBar({
   t, isRunning, loginRequired, lastScrapeAt, scrapeMode, noDataCount,
-  lastResult, onModeChange, onScrapeNow,
+  lastResult, onModeChange, onScrapeNow, onAbort, onClearData,
 }: Props) {
   // ── 假进度条（CSS transition 驱动） ──────────────────────────────────────────
   const [progress, setProgress] = useState(0);
   const [stageText, setStageText] = useState('');
   const startTimeRef = useRef<number | null>(null);
   const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 删除确认状态（首次点击高亮提示，再次点击执行）
+  const [confirmClear, setConfirmClear] = useState(false);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isRunning) {
@@ -75,6 +80,30 @@ export function StatusBar({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning]);
 
+  // 删除确认超时清理
+  useEffect(() => () => {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+  }, []);
+
+  function handleClearClick() {
+    if (confirmClear) {
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      setConfirmClear(false);
+      onClearData();
+    } else {
+      setConfirmClear(true);
+      confirmTimerRef.current = setTimeout(() => setConfirmClear(false), 3_000);
+    }
+  }
+
+  // ── 错误类型 → 中文文字 ────────────────────────────────────────────────────
+  function errorLabel(errorType: string | undefined): string {
+    if (errorType === 'logout')    return '✗ 已登出，数据已丢弃';
+    if (errorType === 'timeout')   return '✗ 已超时（15s），数据已丢弃';
+    if (errorType === 'cancelled') return '✗ 已中止采集';
+    return `✗ ${t.scrapeFailed}`;
+  }
+
   // ── 状态文字 ──────────────────────────────────────────────────────────────────
   const statusText = loginRequired
     ? t.statusWaiting
@@ -85,7 +114,7 @@ export function StatusBar({
           ? lastResult.added > 0
             ? `✓ +${lastResult.added} ${t.scrapeNewRecords}`
             : `✓ ${t.scrapeNoNew}`
-          : `✗ ${t.scrapeFailed}`
+          : errorLabel(lastResult.errorType)
         : lastScrapeAt
           ? `${t.lastUpdated} ${timeAgoShort(lastScrapeAt)}`
           : t.statusIdle;
@@ -138,14 +167,37 @@ export function StatusBar({
             <option value="auto">{t.scrapeModeAuto}</option>
             <option value="manual">{t.scrapeModeManual}</option>
           </select>
-          <button
-            onClick={onScrapeNow}
-            disabled={isRunning}
-            title={t.scrapeNow}
-            className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 disabled:opacity-40 transition-colors text-base leading-none"
-          >
-            ↻
-          </button>
+          {/* 采集中：显示中止按钮；采集完：显示立即采集 + 删除按钮 */}
+          {isRunning ? (
+            <button
+              onClick={onAbort}
+              title="中止本次采集并丢弃数据"
+              className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-red-100 dark:hover:bg-red-900/40 text-red-500 transition-colors text-sm leading-none font-bold"
+            >
+              ✕
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onScrapeNow}
+                title={t.scrapeNow}
+                className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 transition-colors text-base leading-none"
+              >
+                ↻
+              </button>
+              <button
+                onClick={handleClearClick}
+                title={confirmClear ? '再次点击确认清空所有记录' : '清空所有记录'}
+                className={`w-6 h-6 flex items-center justify-center rounded-md transition-colors text-sm leading-none ${
+                  confirmClear
+                    ? 'bg-red-100 dark:bg-red-900/40 text-red-500 hover:bg-red-200 dark:hover:bg-red-900/60'
+                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 dark:text-zinc-500'
+                }`}
+              >
+                {confirmClear ? '?' : '🗑'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 

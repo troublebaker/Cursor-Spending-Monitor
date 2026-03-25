@@ -45,7 +45,7 @@ export type ExtMessage =
   // content → background：数据上报
   | { type: 'USAGE_DATA';    records: UsageRecord[]; isIncremental: boolean }
   | { type: 'SPENDING_DATA'; spending: SpendingData }
-  | { type: 'SCRAPE_ERROR';  error: string; page: 'usage' | 'spending' }
+  | { type: 'SCRAPE_ERROR';  error: string; page: 'usage' | 'spending'; errorType?: 'logout' | 'timeout' | 'cancelled' | 'generic' }
   // content → background：登录状态
   | { type: 'NOT_LOGGED_IN' }
   | { type: 'LOGIN_RESTORED' }
@@ -53,12 +53,33 @@ export type ExtMessage =
   | { type: 'PAGE_READY'; page: 'usage' | 'spending' }
   // sidepanel → background：触发立即采集 / 重新调度 alarm
   | { type: 'TRIGGER_SCRAPE' }
+  // sidepanel → background：中止当前采集周期
+  | { type: 'CANCEL_SCRAPE' }
   // sidepanel → background：聚焦后台 tab 让用户登录（一次性允许前台）
   | { type: 'OPEN_DASHBOARD_TAB' }
+  // ── Token 详情测试 ──
+  // sidepanel → background → content：触发单行 hover 测试
+  | { type: 'TEST_TOKEN_HOVER' }
+  // content → background → sidepanel：hover 测试结果
+  | { type: 'TOKEN_HOVER_RESULT'; html: string | null; triggerText: string; parsed: Record<string, number> | null; portalCount: number; error?: string }
+  // ── 用户信息测试 ──
+  | { type: 'TEST_USER_INFO' }
+  | { type: 'USER_INFO_RESULT'; name: string; plan: string; error?: string }
+  // ── Spending 页面测试 ──
+  | { type: 'TEST_SPENDING_PLAN' }
+  | { type: 'SPENDING_PLAN_RESULT'; plan: string; price: string; resetText: string; error?: string }
+  | { type: 'TEST_INCLUDED_USAGE' }
+  | { type: 'INCLUDED_USAGE_RESULT'; total: string; summary: string; auto: string; api: string; error?: string }
+  | { type: 'TEST_ON_DEMAND' }
+  | { type: 'ON_DEMAND_RESULT'; displayText: string; usedDollars: number; limitDollars: number; mode: string; amount: number | null; error?: string }
+  // ── 中断模拟测试 ──
+  | { type: 'TEST_INTERRUPT'; scenario: 'logout' | 'network' | 'id_mismatch' }
+  | { type: 'INTERRUPT_RESULT'; scenario: string; dataCollected: number; interrupted: boolean; reason: string; checks: Record<string, unknown>; error?: string }
   // background → sidepanel：状态通知
   | { type: 'TAB_CLOSED' }
   | { type: 'TAB_OPENED';    tabId: number }
   | { type: 'SCRAPE_STATUS'; isRunning: boolean; lastScrapeAt: string | null }
+  | { type: 'SCRAPE_FAILED'; errorType: 'logout' | 'timeout' | 'cancelled' | 'generic'; error: string }
   | { type: 'LOGIN_REQUIRED' };
 
 /** background 对 PAGE_READY 的同步响应体（不在 ExtMessage 内，是 sendResponse 值） */

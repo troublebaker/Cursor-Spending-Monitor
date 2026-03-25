@@ -1,8 +1,14 @@
 /**
  * cursor.com DOM 解析器
- * 最后验证日期：2026-03-03
+ * 最后验证日期：2026-03-25
  * cursor.com 技术栈：React SPA，Next.js，Tailwind 动态类
  * 选择器失效时：优先检查 aria-label 和文本内容（比 class 稳定）
+ *
+ * 2026-03-25 修正：
+ *   - 日期 cell：改用 span[title] 获取含年份的完整时间（如 "Mar 25, 2026, 03:44:09 PM GMT+8"）
+ *   - 类型 cell：改用 span[title] 获取完整描述（如 "Included in Ultra"）
+ *   - Tokens ：支持中文"万"单位（如 "28.2万" → 282000）
+ *   - Cell 选择器：改用 role="cell"（实际 DOM 无 td / data-cell，只有 role 属性）
  */
 
 import type { UsageRecord, SpendingData } from './types';
@@ -49,33 +55,82 @@ export function isLoggedIn(): boolean {
 
 // ─── Usage 页面解析 ────────────────────────────────────────────────────────────
 
+/**
+ * 把中文"万"单位的 token 字符串转成数字。
+ * "28.2万" → 282000  "1,234" → 1234  "5000" → 5000
+ */
+function parseTokenCount(text: string): number {
+  const wan = text.match(/^([\d.]+)\s*万$/);
+  if (wan) return Math.round(parseFloat(wan[1]) * 10_000);
+  return parseInt(text.replace(/,/g, ''), 10) || 0;
+}
+
+/**
+ * 解析费用字符串。"Included…" → 0；"$0.0234" → 0.0234
+ */
+function parseCostValue(text: string): number {
+  if (text.toLowerCase().startsWith('included')) return 0;
+  return parseFloat(text.replace(/[$,]/g, '')) || 0;
+}
+
 export function parseRow(row: Element): UsageRecord | null {
-  // 优先：data-cell 或 td
-  const cells = row.querySelectorAll('[data-cell], td');
-  const parts = cells.length >= 5
-    ? Array.from(cells).map(c => c.textContent?.trim() ?? '')
-    : Array.from(row.children).map(c => c.textContent?.trim() ?? '');
+  // 真实 DOM 用 role="cell"（不是 td / data-cell）
+  const cells = Array.from(row.querySelectorAll('[role="cell"]'));
 
-  if (parts.length < 5) return null;
+  // 降级：无 role 属性时退回到子元素顺序
+  const effectiveCells = cells.length >= 5
+    ? cells
+    : Array.from(row.children);
 
-  const [rawDt, type, model, tokensStr, costStr] = parts;
+  if (effectiveCells.length < 5) return null;
+
+  // ── Cell 0: 日期 ──
+  // textContent 只有 "Mar 25, 03:44 PM"（无年份），title 有 "Mar 25, 2026, 03:44:09 PM GMT+8"
+  const dateSpan = effectiveCells[0].querySelector('span[title]');
+  const rawDt = dateSpan?.getAttribute('title') ?? effectiveCells[0].textContent?.trim() ?? '';
 
   // 忽略表头行
-  if (rawDt.toLowerCase().includes('date') || rawDt.toLowerCase().includes('时间')) return null;
+  if (!rawDt || rawDt.toLowerCase().includes('date') || rawDt.toLowerCase().includes('时间')) return null;
 
-  // 规范化日期：cursor.com 可能显示 "2026-03-22 03:01:32"（空格）或 ISO，统一转为 ISO
-  const dt = rawDt.replace(
-    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})(.*)$/,
-    '$1T$2$3',
-  );
+  // 尝试解析为 ISO；失败时保留原始字符串
+  const parsedDate = new Date(rawDt);
+  const dt = isNaN(parsedDate.getTime()) ? rawDt : parsedDate.toISOString();
 
-  return {
-    dt,
-    type,
-    model,
-    tokens: parseInt(tokensStr.replace(/,/g, ''), 10) || 0,
-    cost: parseFloat(costStr.replace(/[$,]/g, '')) || 0,
-  };
+  // ── Cell 1: 类型 ──
+  // textContent = "Included"，title = "Included in Ultra" / "On-Demand" 等
+  const typeSpan = effectiveCells[1].querySelector('span[title]');
+  const type = typeSpan?.getAttribute('title') ?? effectiveCells[1].textContent?.trim() ?? '';
+
+  // ── Cell 2: 模型 ──
+  const modelSpan = effectiveCells[2].querySelector('span[title]');
+  const model = modelSpan?.getAttribute('title') ?? effectiveCells[2].textContent?.trim() ?? '';
+
+  // ── Cell 3: Tokens（支持"万"单位） ──
+  const tokensStr = effectiveCells[3].textContent?.trim() ?? '';
+  const tokens = parseTokenCount(tokensStr);
+
+  // ── Cell 4: 费用 ──
+  const costStr = effectiveCells[4].textContent?.trim() ?? '';
+  const cost = parseCostValue(costStr);
+
+  if (!type || !model) return null;
+
+  return { dt, type, model, tokens, cost };
+}
+
+/**
+ * 点击 30d 时间范围按钮（若当前未激活则点击，并等待表格刷新）
+ */
+export async function click30dFilter(): Promise<void> {
+  const buttons = document.querySelectorAll('.dashboard-segmented-control-option');
+  const btn = Array.from(buttons).find(
+    b => b.textContent?.trim() === '30d',
+  ) as HTMLButtonElement | null;
+  if (!btn) return;
+  if (btn.classList.contains('dashboard-segmented-control-option-active')) return;
+  btn.click();
+  // 等待 SPA 刷新表格数据
+  await sleep(1_200);
 }
 
 export async function scrapeAllPages(): Promise<UsageRecord[]> {
@@ -132,8 +187,11 @@ export async function scrapeIncremental(cutoffDt: Date): Promise<UsageRecord[]> 
 // 使用 document.body.innerText 全文正则，不依赖 class 名或元素结构
 // 基于真实数据验证（Ultra 计划，$200/mo，2026-03-23）
 
-export function parseSpending(): SpendingData {
-  const raw = document.body.innerText ?? '';
+/**
+ * 可在任意上下文调用（包括测试面板），接受页面 innerText 字符串。
+ * parseSpending() 是其对 cursor.com 页面的包装。
+ */
+export function parseSpendingFromText(raw: string): SpendingData {
 
   // 套餐名：按优先级匹配，Ultra 最先（避免被 Pro 前缀误匹配）
   const planNames = ['Ultra', 'Pro+', 'Business', 'Pro', 'Free'];
@@ -183,5 +241,101 @@ export function parseSpending(): SpendingData {
   };
 }
 
+/** cursor.com spending 页面直接调用的包装：读取当前页面 innerText */
+export function parseSpending(): SpendingData {
+  return parseSpendingFromText(document.body.innerText ?? '');
+}
 
+// ─── 用户信息解析（姓名 + 套餐） ───────────────────────────────────────────────
 
+/**
+ * 从 cursor.com/(locale)/dashboard/... 侧边栏提取用户姓名和套餐名称。
+ *
+ * DOM 结构（已通过真实 HTML 验证 2026-03-25）：
+ * <div class="flex min-w-0 flex-1 flex-col items-start gap-0">
+ *   <div class="flex ...">
+ *     <span class="truncate text-base font-medium">Fancy James</span>   ← name
+ *   </div>
+ *   <span class="... text-sm text-secondary">Ultra</span>               ← plan
+ * </div>
+ */
+export function parseUserInfo(doc: Document): { name: string; plan: string } | null {
+  const nameEl = doc.querySelector<HTMLElement>('span.truncate.text-base.font-medium');
+  if (!nameEl) return null;
+
+  // plan span 是上层 flex-col 容器的直接子 <span>（紧跟 name 父 div 之后）
+  const infoCol = nameEl.closest<HTMLElement>('[class*="flex-col"][class*="items-start"]');
+  const planEl  = infoCol
+    ? Array.from(infoCol.children).find(
+        el => el.tagName === 'SPAN' && el !== nameEl.parentElement,
+      )
+    : null;
+
+  return {
+    name: nameEl.textContent?.trim() ?? '',
+    plan: planEl?.textContent?.trim() ?? '',
+  };
+}
+
+// ─── Spending 页面解析（Tests 1 & 3） ─────────────────────────────────────────
+
+/**
+ * Test 1：解析 "Current Plan" 区块 — 套餐名称、价格、重置日期。
+ *
+ * HTML 结构（spending 页，2026-03-25 验证）：
+ * <div class="...text-tertiary uppercase...">Current Plan</div>
+ * <div class="flex items-baseline gap-2 mb-1">
+ *   <p class="...text-lg font-semibold text-primary">Ultra</p>          ← plan
+ *   <p class="...text-base text-secondary">$200/mo</p>                   ← price
+ * </div>
+ * <p class="...text-base text-secondary mt-1 flex-grow">Resets on ...</p> ← reset
+ */
+export function parseSpendingPlanInfo(doc: Document): {
+  plan: string; price: string; resetText: string;
+} | null {
+  const planEl  = doc.querySelector<HTMLElement>('p[class*="text-lg"][class*="font-semibold"]');
+  if (!planEl) return null;
+  // Price: sibling p in the same "items-baseline" flex row, before the mt-1 reset line
+  const priceEl = planEl.parentElement?.querySelector<HTMLElement>('p[class*="text-base"]:not([class*="mt-1"])');
+  // Reset: the p that has both mt-1 and flex-grow
+  const resetEl = doc.querySelector<HTMLElement>('p[class*="mt-1"][class*="flex-grow"]');
+  return {
+    plan:      planEl.textContent?.trim() ?? '',
+    price:     priceEl?.textContent?.trim() ?? '',
+    resetText: resetEl?.textContent?.trim() ?? '',
+  };
+}
+
+/**
+ * Test 3：解析 "On-Demand Usage" 区块 — 用量金额 + Monthly Limit 配置。
+ *
+ * On-demand value: 靠近 #on-demand-usage header 的第一个 span.font-medium.text-primary
+ * Mode button: button[aria-haspopup="true"] 内文本（Fixed/Unlimited/Disabled）
+ * Amount input: input[type="number"] 的 value（Fixed 模式下才有意义）
+ */
+export function parseOnDemandInfo(doc: Document): {
+  displayText: string;
+  usedDollars: number;
+  limitDollars: number;
+  mode: string;
+  amount: number | null;
+} | null {
+  const header  = doc.querySelector<HTMLElement>('#on-demand-usage');
+  if (!header) return null;
+  const section = header.closest<HTMLElement>('.dashboard-section');
+
+  const valueEl     = section?.querySelector<HTMLElement>('span.font-medium.text-primary');
+  const displayText = valueEl?.textContent?.trim() ?? '';
+  const parts       = displayText.split('/').map(s => s.replace(/[$,\s]/g, ''));
+  const usedDollars  = parseFloat(parts[0] ?? '0') || 0;
+  const limitDollars = parseFloat(parts[1] ?? '0') || 0;
+
+  const modeBtn = doc.querySelector<HTMLButtonElement>('button[aria-haspopup="true"]');
+  const rawMode = (modeBtn?.textContent ?? '').trim();
+  const mode    = (['Fixed', 'Unlimited', 'Disabled'] as const).find(m => rawMode.startsWith(m)) ?? rawMode;
+
+  const amountInput = doc.querySelector<HTMLInputElement>('input[type="number"]');
+  const amount      = amountInput ? (parseInt(amountInput.value, 10) || null) : null;
+
+  return { displayText, usedDollars, limitDollars, mode, amount };
+}
