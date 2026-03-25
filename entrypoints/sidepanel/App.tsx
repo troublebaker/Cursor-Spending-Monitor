@@ -291,7 +291,8 @@ function App() {
     await scrapeModeStorage.setValue('manual');
     setOnboarded(true);
     setScrapeMode('manual');
-    // 不自动触发采集；首次引导后默认手动，用户自行点击「更新数据」
+    // 用户主动点击「开始采集」→ 立即触发一次快速采集（不带 token，符合"首次只能快速"原则）
+    chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
   };
 
   const handleModeChange = async (newMode: ScrapeMode) => {
