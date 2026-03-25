@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { storage } from 'wxt/utils/storage';
 import type { LocaleDict } from './zh-CN';
 export type { LocaleDict };
 
-import zh from './zh-CN';
-import en from './en';
+  import en from './en';
+  import zh from './zh-CN';
 
 export type SupportedLang = 'zh-CN' | 'en';
 

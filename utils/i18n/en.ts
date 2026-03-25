@@ -4,6 +4,7 @@ const dict: LocaleDict = {
   appTitle: 'Cursor Spending Monitor',
   loading: 'Loading data…',
   noData: 'No data yet',
+  clickUpdateToStart: 'Click "Update Data" to start collecting',
   themeLight: 'Light',
   themeDark: 'Dark',
   themeSystem: 'System',

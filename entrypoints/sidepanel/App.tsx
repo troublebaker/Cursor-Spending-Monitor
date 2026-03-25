@@ -644,8 +644,13 @@ function App() {
       {/* ── 数据为空时提示 ── */}
       {usage.length === 0 && (
         <div className="flex flex-col items-center justify-center py-12 text-zinc-400 text-sm gap-2">
-          <span className="text-3xl">🕐</span>
-          <span>{t.statusCollecting}</span>
+          <span className="text-3xl">{isRunning ? '🕐' : '📊'}</span>
+          <span>{isRunning ? t.statusCollecting : t.noData}</span>
+          {!isRunning && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-600 mt-1">
+              {t.clickUpdateToStart}
+            </span>
+          )}
         </div>
       )}
 

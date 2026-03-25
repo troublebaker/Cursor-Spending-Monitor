@@ -7,6 +7,7 @@ export interface LocaleDict {
   appTitle: string;
   loading: string;
   noData: string;
+  clickUpdateToStart: string;
   // 主题切换
   themeLight: string;
   themeDark: string;
@@ -147,6 +148,7 @@ const dict: LocaleDict = {
   appTitle: 'Cursor Spending Monitor',
   loading: '正在加载数据…',
   noData: '暂无数据',
+  clickUpdateToStart: '点击「更新数据」开始采集',
   themeLight: '浅色',
   themeDark: '深色',
   themeSystem: '跟随系统',
