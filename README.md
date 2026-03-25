@@ -6,6 +6,8 @@
 [![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-brightgreen?logo=googlechrome)](https://chromewebstore.google.com)
 [![WXT](https://img.shields.io/badge/Built%20with-WXT-blueviolet)](https://wxt.dev)
 
+English · [中文](README.zh-CN.md)
+
 ---
 
 ## ✨ Features

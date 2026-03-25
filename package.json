@@ -1,5 +1,5 @@
 {
-  "name": "cursor-stats",
+  "name": "cursor-spending-monitor",
   "description": "Track your Cursor.com API usage & spending — fully local, no server",
   "private": true,
   "version": "0.1.0",
