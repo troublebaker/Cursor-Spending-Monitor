@@ -142,7 +142,7 @@ const dict: LocaleDict = {
   scrapeModeAutoCalm: '自动冷静',
   scrapeModeManual: '手动',
   scrapeNow: '更新数据',
-  scrapeNowWithToken: '+Token',
+  scrapeNowWithToken: '更新数据+Token',
   statusCollecting: '采集中…',
   statusIdle: '空闲',
   statusWaiting: '等待登录',

@@ -5,16 +5,19 @@ import type { ScrapeMode } from '../utils/types';
 interface Props {
   t: LocaleDict;
   isRunning: boolean;
+  slowScrapeRunning: boolean;
   loginRequired: boolean;
   lastScrapeAt: string | null;
   scrapeMode: ScrapeMode;
   noDataCount: number;
   lastResult: { ok: boolean; added: number; errorType?: string } | null;
+  autoIncludeToken: boolean;
   onModeChange: (mode: ScrapeMode) => void;
   onScrapeNow: () => void;
   onScrapeWithToken: () => void;
   onAbort: () => void;
   onClearData: () => void;
+  onAutoIncludeTokenChange: (v: boolean) => void;
 }
 
 function timeAgoShort(iso: string): string {
@@ -39,8 +42,9 @@ function getStageText(elapsedSec: number, t: LocaleDict): string {
 }
 
 export function StatusBar({
-  t, isRunning, loginRequired, lastScrapeAt, scrapeMode, noDataCount,
-  lastResult, onModeChange, onScrapeNow, onScrapeWithToken, onAbort, onClearData,
+  t, isRunning, slowScrapeRunning, loginRequired, lastScrapeAt, scrapeMode, noDataCount,
+  lastResult, autoIncludeToken, onModeChange, onScrapeNow, onScrapeWithToken,
+  onAbort, onClearData, onAutoIncludeTokenChange,
 }: Props) {
   // ── 假进度条（CSS transition 驱动） ──────────────────────────────────────────
   const [progress, setProgress] = useState(0);
@@ -164,13 +168,32 @@ export function StatusBar({
           <select
             value={scrapeMode}
             onChange={e => onModeChange(e.target.value as ScrapeMode)}
+            title={
+              scrapeMode === 'auto'
+                ? '自动活跃：每隔 1 分钟查询一次；无新数据则指数衰减，最长间隔 60 分钟；重新点击「立即采集」可重置间隔'
+                : scrapeMode === 'auto_calm'
+                  ? '自动冷静：每隔 5 分钟查询一次；无新数据则指数衰减，最长间隔 60 分钟；重新点击「立即采集」可重置间隔'
+                  : '手动模式：不自动查询，仅在点击「更新数据」时采集'
+            }
             className="text-xs bg-transparent border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-0.5 text-zinc-600 dark:text-zinc-400 cursor-pointer"
           >
             <option value="auto">{t.scrapeModeAuto}</option>
             <option value="auto_calm">{t.scrapeModeAutoCalm}</option>
             <option value="manual">{t.scrapeModeManual}</option>
           </select>
-          {isRunning ? (
+          {/* 自动含 Token 勾选框（仅自动模式下显示） */}
+          {(scrapeMode === 'auto' || scrapeMode === 'auto_calm') && (
+            <label className="flex items-center gap-0.5 cursor-pointer select-none" title="勾选后每次自动采集完成后，同时采集每条记录的 Token 输入/输出明细（增量：已有数据的行会跳过）。逐行悬停读取，速度较慢，每页约 2~3 分钟，后台自动完成无需等待。">
+              <input
+                type="checkbox"
+                checked={autoIncludeToken}
+                onChange={e => onAutoIncludeTokenChange(e.target.checked)}
+                className="w-3 h-3 cursor-pointer accent-blue-500"
+              />
+              <span className="text-zinc-400 dark:text-zinc-500">+Token</span>
+            </label>
+          )}
+          {(isRunning || slowScrapeRunning) ? (
             <button
               onClick={onAbort}
               title="中止本次采集并丢弃数据"
@@ -195,7 +218,7 @@ export function StatusBar({
       </div>
 
       {/* 第二行：更新按钮（仅非采集中时显示） */}
-      {!isRunning && !loginRequired && (
+      {!isRunning && !slowScrapeRunning && !loginRequired && (
         <div className="px-3 pb-2 flex gap-2">
           <button
             onClick={onScrapeNow}
@@ -206,7 +229,7 @@ export function StatusBar({
           </button>
           <button
             onClick={onScrapeWithToken}
-            title="更新数据（含 Token 输入/输出明细）"
+            title="先完成一次普通采集，再逐行悬停读取 Token 输入/输出明细（增量：已有数据的行跳过）。较慢，每页约 2~3 分钟，后台自动完成无需等待。"
             className="flex-1 py-1.5 text-xs font-medium rounded-lg bg-brand/80 text-white hover:opacity-90 active:opacity-75 transition-opacity"
           >
             {t.scrapeNowWithToken}

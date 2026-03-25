@@ -12,11 +12,11 @@ function relativeTime(ts: string): string {
 
 // ── 消息图标 ─────────────────────────────────────────────────────────────────
 
-function KindIcon({ kind }: { kind: InboxMessage['kind'] }) {
+function KindIcon({ kind, isRunning }: { kind: InboxMessage['kind']; isRunning: boolean }) {
   if (kind === 'progress') {
-    return (
-      <span className="inline-block w-3.5 h-3.5 border-2 border-brand border-t-transparent rounded-full animate-spin flex-shrink-0 mt-0.5" />
-    );
+    return isRunning
+      ? <span className="inline-block w-3.5 h-3.5 border-2 border-brand border-t-transparent rounded-full animate-spin flex-shrink-0 mt-0.5" />
+      : <span className="inline-block w-3.5 h-3.5 border-2 border-zinc-300 dark:border-zinc-600 rounded-full flex-shrink-0 mt-0.5" />;
   }
   const map: Record<string, string> = {
     success: '✓',
@@ -40,14 +40,12 @@ function KindIcon({ kind }: { kind: InboxMessage['kind'] }) {
 interface Props {
   messages:    InboxMessage[];
   isRunning:   boolean;
-  onStart:     () => void;
-  onCancel:    () => void;
   onClear:     () => void;
 }
 
 // ── 组件 ──────────────────────────────────────────────────────────────────────
 
-export function InboxPanel({ messages, isRunning, onStart, onCancel, onClear }: Props) {
+export function InboxPanel({ messages, isRunning, onClear }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [lastSeenCount, setLastSeenCount] = useState(messages.length);
   const panelRef   = useRef<HTMLDivElement>(null);
@@ -151,12 +149,12 @@ export function InboxPanel({ messages, isRunning, onStart, onCancel, onClear }: 
           <div ref={listRef} className="overflow-y-auto max-h-56 divide-y divide-zinc-50 dark:divide-zinc-800/50">
             {messages.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-zinc-400">
-                暂无消息，点击下方按钮开始 Token 详情采集
+                暂无消息，通过「更新数据+Token」按钮开始采集
               </div>
             ) : (
               messages.map(msg => (
                 <div key={msg.id} className="flex gap-2 px-3 py-2">
-                  <KindIcon kind={msg.kind} />
+                  <KindIcon kind={msg.kind} isRunning={isRunning} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-zinc-700 dark:text-zinc-300 leading-snug break-words">
                       {msg.text}
@@ -175,18 +173,6 @@ export function InboxPanel({ messages, isRunning, onStart, onCancel, onClear }: 
               ))
             )}
           </div>
-
-          {/* 底部操作：仅采集中时显示停止按钮 */}
-          {isRunning && (
-            <div className="px-3 py-2 border-t border-zinc-100 dark:border-zinc-800">
-              <button
-                onClick={onCancel}
-                className="w-full py-1.5 text-xs rounded-lg bg-red-50 hover:bg-red-100 text-red-500 dark:bg-red-900/20 dark:hover:bg-red-900/40 dark:text-red-400 transition-colors font-medium"
-              >
-                停止采集（抛弃所有数据）
-              </button>
-            </div>
-          )}
 
         </div>
       )}

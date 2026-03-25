@@ -51,7 +51,7 @@ const dict: LocaleDict = {
   scrapeModeAutoCalm: 'Auto (Calm)',
   scrapeModeManual: 'Manual',
   scrapeNow: 'Update',
-  scrapeNowWithToken: '+Token',
+  scrapeNowWithToken: 'Update+Token',
   statusCollecting: 'Collecting…',
   statusIdle: 'Idle',
   statusWaiting: 'Waiting for login',

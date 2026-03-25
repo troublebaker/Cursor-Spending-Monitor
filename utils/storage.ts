@@ -65,6 +65,12 @@ export const noTabReminderStorage = storage.defineItem<boolean>(
   { fallback: false },
 );
 
+/** 自动采集时同时采集 Token 明细（含 input/output 明细） */
+export const autoIncludeTokenStorage = storage.defineItem<boolean>(
+  'local:autoIncludeToken',
+  { fallback: false },
+);
+
 /** 用户是否已完成首次引导 */
 export const onboardedStorage = storage.defineItem<boolean>(
   'local:onboarded',

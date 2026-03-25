@@ -9,6 +9,7 @@ import {
   slowScrapeStateStorage,
   usageStorage,
   pendingSlowScrapeStorage,
+  autoIncludeTokenStorage,
 } from '../utils/storage';
 import type { ExtMessage, ScrapeParams, InboxMessage, TokenBreakdown } from '../utils/types';
 
@@ -185,6 +186,12 @@ async function finishCycle(usageAdded: number): Promise<void> {
   if (pending && !slowRunning) {
     await pendingSlowScrapeStorage.setValue(false);
     await startSlowScrape();
+    return;
+  }
+  // 若用户开启「自动含 Token」选项，每次自动采集完也触发 Token 采集
+  const autoToken = await autoIncludeTokenStorage.getValue();
+  if (autoToken && !slowRunning) {
+    await startSlowScrape();
   }
 }
 
@@ -328,11 +335,18 @@ export default defineBackground(async () => {
         }
 
         const latestDt = await getLatestDt();
+        const isSlowTab = slowRunning && senderTabId === slowTabId;
+        // 慢速增量：收集已有 tokenBreakdown 的行 key，content script 跳过这些行
+        const existingTokenKeys = isSlowTab
+          ? (await usageStorage.getValue())
+              .filter(r => r.tokenBreakdown != null)
+              .map(r => `${r.dt}|${r.model}`)
+          : undefined;
         const params: ScrapeParams = {
           isIncremental: latestDt !== null,
           cutoffIso: latestDt ? latestDt.toISOString() : null,
-          // slowRunning 为 true 且这是慢速 tab → 进入慢速路径
-          slowMode: slowRunning && senderTabId === slowTabId,
+          slowMode: isSlowTab,
+          existingTokenKeys,
         };
         sendResponse(params);
       })();

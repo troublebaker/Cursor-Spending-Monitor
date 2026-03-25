@@ -11,7 +11,16 @@ import {
   click30dFilter,
 } from '../utils/parser';
 import type { ScrapeParams, TokenBreakdown } from '../utils/types';
-import { userNameStorage } from '../utils/storage';
+
+// ── content script 内嵌 chrome.storage 轻量 helpers（不可 import wxt/storage）──
+const USER_NAME_KEY = 'knownUserName';
+async function getUserName(): Promise<string> {
+  const r = await chrome.storage.local.get(USER_NAME_KEY);
+  return (r[USER_NAME_KEY] as string) ?? 'unknown';
+}
+async function setUserName(v: string): Promise<void> {
+  await chrome.storage.local.set({ [USER_NAME_KEY]: v });
+}
 
 const USAGE_SELECTOR     = '.dashboard-table-rows';
 const SCRAPE_TIMEOUT_MS  = 20_000;
@@ -190,11 +199,11 @@ async function hoverAndParseBreakdown(trigger: HTMLElement): Promise<TokenBreakd
  *
  * 每页完成后发送 SLOW_SCRAPE_PAGE 给 background，由 background 合并写入 storage 并推 inbox 消息。
  */
-async function slowScrapeAllPages(): Promise<void> {
+async function slowScrapeAllPages(existingKeys: Set<string> = new Set()): Promise<void> {
   let lastDataAt = Date.now();
   let pageNum    = 1;
 
-  const storedName = await userNameStorage.getValue();
+  const storedName = await getUserName();
 
   while (!slowScrapeCancelled) {
     // ── 等待表格加载 ─────────────────────────────────────────────────────────
@@ -251,6 +260,9 @@ async function slowScrapeAllPages(): Promise<void> {
 
       const key = extractRowKey(row);
       if (!key) continue;
+
+      // 增量：已有 tokenBreakdown 则跳过，不重复 hover
+      if (existingKeys.has(key)) continue;
 
       const cells = Array.from(row.querySelectorAll('[role="cell"]'));
       if (cells.length < 4) continue;
@@ -650,12 +662,12 @@ async function runPreCommitGuard(): Promise<{ valid: boolean; reason?: string }>
     return { valid: false, reason: '无法读取用户信息（DOM 用户头像未就绪）' };
   }
 
-  const storedName = await userNameStorage.getValue();
+  const storedName = await getUserName();
 
   if (storedName === 'unknown' || storedName === currentName) {
     // 首次记录 或 账号一致 → 更新名字库，通过
     if (storedName !== currentName) {
-      await userNameStorage.setValue(currentName);
+      await setUserName(currentName);
     }
     return { valid: true };
   }
@@ -915,7 +927,7 @@ export default defineContentScript({
       );
       try {
         slowScrapeCancelled = false;
-        await Promise.race([slowScrapeAllPages(), maxTimeout]);
+        await Promise.race([slowScrapeAllPages(new Set(params?.existingTokenKeys ?? [])), maxTimeout]);
         // Promise.race 正常 resolve（无异常）
         if (!slowScrapeCancelled) {
           // 所有页自然完成，通知 background 写入 storage 并结束

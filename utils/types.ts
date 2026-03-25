@@ -145,4 +145,6 @@ export interface ScrapeParams {
   cutoffIso: string | null;
   /** true 时 content script 执行慢速 hover 采集（代替正常 doScrape） */
   slowMode?: boolean;
+  /** 已有 tokenBreakdown 的行 key 集合（慢速增量：跳过已采集行） */
+  existingTokenKeys?: string[];
 }

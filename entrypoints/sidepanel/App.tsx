@@ -12,6 +12,7 @@ import {
   noTabReminderStorage,
   inboxStorage,
   slowScrapeStateStorage,
+  autoIncludeTokenStorage,
 } from '../../utils/storage';
 import type { UsageRecord, SpendingData, ScrapeMode, InboxMessage } from '../../utils/types';
 import { SummaryCards } from '../../components/SummaryCards';
@@ -69,8 +70,8 @@ function App() {
   // 测试面板开关（仅 DEV 模式可用）
   const [showTest, setShowTest] = useState(false);
 
-  // 宽度切换
-  const [wideMode, setWideMode] = useState(false);
+  // 自动采集含 Token 设置
+  const [autoIncludeToken, setAutoIncludeToken] = useState(false);
 
   // InboxPanel 状态
   const [inboxMessages,    setInboxMessages]    = useState<InboxMessage[]>([]);
@@ -87,7 +88,8 @@ function App() {
       scrapeStateStorage.getValue(),
       inboxStorage.getValue(),
       slowScrapeStateStorage.getValue(),
-    ]).then(([u, s, ob, sm, ss, inbox, sss]) => {
+      autoIncludeTokenStorage.getValue(),
+    ]).then(([u, s, ob, sm, ss, inbox, sss, ait]) => {
       setUsage(u);
       setSpending(s);
       setOnboarded(ob);
@@ -98,6 +100,7 @@ function App() {
       setLoginRequired(ss.loginRequired ?? false);
       setInboxMessages(inbox);
       setSlowScrapeRunning(sss.isRunning);
+      setAutoIncludeToken(ait);
 
       // 侧边栏已打开：通知 background 重置指数衰减，按基准间隔重新调度
       if (sm === 'auto' || sm === 'auto_calm') {
@@ -111,6 +114,9 @@ function App() {
     const unwatchInbox    = inboxStorage.watch(v    => setInboxMessages(v ?? []));
     const unwatchSlowState = slowScrapeStateStorage.watch(v => {
       if (v) setSlowScrapeRunning(v.isRunning);
+    });
+    const unwatchAutoToken = autoIncludeTokenStorage.watch(v => {
+      if (v !== null) setAutoIncludeToken(v);
     });
     const unwatchState    = scrapeStateStorage.watch(v => {
       if (!v) return;
@@ -126,6 +132,7 @@ function App() {
       unwatchSpending();
       unwatchInbox();
       unwatchSlowState();
+      unwatchAutoToken();
       unwatchState();
     };
   }, []);
@@ -243,20 +250,18 @@ function App() {
     chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE_WITH_TOKEN' }).catch(() => {});
   };
 
-  function handleToggleWidth() {
-    const next = !wideMode;
-    setWideMode(next);
-    if (next) {
-      // 宽模式：占屏幕可用宽度 60%
-      const w = Math.round(window.screen.availWidth * 0.6);
-      document.documentElement.style.minWidth = `${w}px`;
-    } else {
-      document.documentElement.style.minWidth = '';
-    }
-  }
-
   const handleAbort = () => {
-    chrome.runtime.sendMessage({ type: 'CANCEL_SCRAPE' }).catch(() => {});
+    if (isRunning) {
+      chrome.runtime.sendMessage({ type: 'CANCEL_SCRAPE' }).catch(() => {});
+    }
+    if (slowScrapeRunning) {
+      chrome.runtime.sendMessage({ type: 'SLOW_SCRAPE_CANCEL' }).catch(() => {});
+    }
+  };
+
+  const handleAutoIncludeTokenChange = async (v: boolean) => {
+    setAutoIncludeToken(v);
+    await autoIncludeTokenStorage.setValue(v);
   };
 
   const handleClearData = async () => {
@@ -369,8 +374,6 @@ function App() {
           <InboxPanel
             messages={inboxMessages}
             isRunning={slowScrapeRunning}
-            onStart={handleSlowScrapeStart}
-            onCancel={handleSlowScrapeCancel}
             onClear={handleInboxClear}
           />
           <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
@@ -402,34 +405,6 @@ function App() {
               ⚗️
             </button>
           )}
-          {/* 宽度切换按钮 */}
-          <button
-            onClick={handleToggleWidth}
-            title={wideMode ? '缩窄侧边栏' : '展宽侧边栏（60%）'}
-            className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors"
-          >
-            {wideMode ? (
-              // 收起：两箭头朝内
-              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 2 L3 5 L6 8" />
-                <path d="M10 2 L13 5 L10 8" />
-                <path d="M3 5 H13" />
-                <path d="M6 10 L3 13 L6 16" opacity="0" />
-                <path d="M4 11 H12" />
-                <path d="M6 14 L3 11 L6 8" opacity="0" />
-              </svg>
-            ) : (
-              // 展开：两箭头朝外
-              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 5 L5 2 L8 5" />
-                <path d="M8 5 L11 2 L14 5" />
-                <path d="M5 2 V8 M11 2 V8" />
-                <path d="M2 11 L5 14 L8 11" />
-                <path d="M8 11 L11 14 L14 11" />
-                <path d="M5 14 V8 M11 14 V8" />
-              </svg>
-            )}
-          </button>
         </div>
       </header>
 
@@ -437,16 +412,19 @@ function App() {
       <StatusBar
         t={t}
         isRunning={isRunning}
+        slowScrapeRunning={slowScrapeRunning}
         loginRequired={loginRequired}
         lastScrapeAt={lastScrapeAt}
         scrapeMode={scrapeMode}
         noDataCount={noDataCount}
         lastResult={lastResult}
+        autoIncludeToken={autoIncludeToken}
         onModeChange={handleModeChange}
         onScrapeNow={handleScrapeNow}
         onScrapeWithToken={handleScrapeWithToken}
         onAbort={handleAbort}
         onClearData={handleClearData}
+        onAutoIncludeTokenChange={handleAutoIncludeTokenChange}
       />
 
       {/* ── Tab 关闭提醒 ── */}
