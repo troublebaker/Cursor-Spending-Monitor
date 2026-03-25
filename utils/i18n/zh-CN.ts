@@ -29,6 +29,9 @@ export interface LocaleDict {
   topModels: string;
   detailTable: string;
   planDetail: string;
+  // F05 新增 section 标题
+  sectionPlan: string;
+  sectionDemand: string;
   // F03 图表内容
   onDemand: string;
   included: string;
@@ -59,8 +62,10 @@ export interface LocaleDict {
   loginNote: string;         // 登录后采集自动恢复
   // F04 采集状态栏
   scrapeModeAuto: string;
+  scrapeModeAutoCalm: string;
   scrapeModeManual: string;
   scrapeNow: string;
+  scrapeNowWithToken: string;
   statusCollecting: string;
   statusIdle: string;
   statusWaiting: string;
@@ -107,6 +112,8 @@ const dict: LocaleDict = {
   topModels: '模型分布 Top 12',
   detailTable: '明细记录',
   planDetail: '套餐详情',
+  sectionPlan: '套餐 & 配额',
+  sectionDemand: '按需 & 月限',
   onDemand: '按需',
   included: '包含',
   callCount: '次',
@@ -131,9 +138,11 @@ const dict: LocaleDict = {
   loginRequiredDesc: '未检测到登录状态，请登录后继续',
   loginOpen: '打开 Cursor 登录页',
   loginNote: '登录成功后，数据采集将自动恢复',
-  scrapeModeAuto: '自动',
+  scrapeModeAuto: '自动活跃',
+  scrapeModeAutoCalm: '自动冷静',
   scrapeModeManual: '手动',
-  scrapeNow: '立即采集',
+  scrapeNow: '更新数据',
+  scrapeNowWithToken: '+Token',
   statusCollecting: '采集中…',
   statusIdle: '空闲',
   statusWaiting: '等待登录',

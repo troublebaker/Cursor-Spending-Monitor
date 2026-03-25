@@ -1,5 +1,5 @@
 import { storage } from 'wxt/utils/storage';
-import type { UsageRecord, SpendingData, Settings, ScrapeState, ScrapeMode } from './types';
+import type { UsageRecord, SpendingData, Settings, ScrapeState, ScrapeMode, InboxMessage, SlowScrapeState } from './types';
 
 // ⚠️ key 命名规范：'local:camelCase'，修改 key 必须写迁移函数
 
@@ -69,4 +69,40 @@ export const noTabReminderStorage = storage.defineItem<boolean>(
 export const onboardedStorage = storage.defineItem<boolean>(
   'local:onboarded',
   { fallback: false },
+);
+
+// ─── F05 新增 ─────────────────────────────────────────────────────────────────
+
+/** 已知账号姓名，用于采集提交前的账号一致性校验 */
+export const userNameStorage = storage.defineItem<string>(
+  'local:knownUserName',
+  { fallback: 'unknown' },
+);
+
+/** InboxPanel 消息列表（最多保留 100 条，新消息在前） */
+export const inboxStorage = storage.defineItem<InboxMessage[]>(
+  'local:inboxMessages',
+  { fallback: [] },
+);
+
+/**
+ * 「更新数据(含输入输出)」按钮触发标志：普通采集完成后自动开启慢速采集。
+ * 慢速采集开始后清除此标志。
+ */
+export const pendingSlowScrapeStorage = storage.defineItem<boolean>(
+  'local:pendingSlowScrape',
+  { fallback: false },
+);
+
+/** 慢速 Token 采集运行状态 */
+export const slowScrapeStateStorage = storage.defineItem<SlowScrapeState>(
+  'local:slowScrapeState',
+  {
+    fallback: {
+      isRunning:   false,
+      currentPage: 0,
+      totalPages:  0,
+      startedAt:   null,
+    },
+  },
 );

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import type { UsageRecord, SpendingData, ScrapeMode } from '../utils/types';
+import type { UsageRecord, SpendingData, ScrapeMode, InboxMessage } from '../utils/types';
+import { inboxStorage, usageStorage } from '../utils/storage';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,12 @@ export function TestPanel({ usage, spending, status, onClose }: Props) {
     checks:        Record<string, unknown>;
     error?:        string;
   } | null>(null);
+
+  // 慢速采集全流程测试
+  type SlowTestStep = 'idle' | 'notify' | 'inbox' | 'scraping' | 'success' | 'refresh' | 'done' | 'error';
+  const [slowTestStep,    setSlowTestStep]    = useState<SlowTestStep>('idle');
+  const [slowTestLog,     setSlowTestLog]     = useState<string[]>([]);
+  const [slowTestSamples, setSlowTestSamples] = useState<UsageRecord[]>([]);
 
   // 监听 background 广播
   useEffect(() => {
@@ -123,6 +130,25 @@ export function TestPanel({ usage, spending, status, onClose }: Props) {
         });
         setInterruptState('done');
       }
+      // 慢速采集进度消息（用于全流程测试追踪）
+      if (msg.type === 'INBOX_MESSAGE') {
+        const m = msg.message as InboxMessage;
+        setSlowTestLog(prev => [`[${m.kind.toUpperCase()}] ${m.text}`, ...prev]);
+      }
+      if (msg.type === 'SLOW_SCRAPE_DONE') {
+        setSlowTestStep('refresh');
+        setSlowTestLog(prev => ['[SUCCESS] 慢速采集完成，正在加载最新样本…', ...prev]);
+        // 刷新采样数据
+        setTimeout(async () => {
+          const records = await usageStorage.getValue();
+          setSlowTestSamples(records.slice(0, 5));
+          setSlowTestStep('done');
+        }, 600);
+      }
+      if (msg.type === 'SLOW_SCRAPE_FAILED_SLOW') {
+        setSlowTestStep('error');
+        setSlowTestLog(prev => [`[ERROR] 采集中断：${msg.reason as string}`, ...prev]);
+      }
     };
     chrome.runtime.onMessage.addListener(handler);
     return () => chrome.runtime.onMessage.removeListener(handler);
@@ -130,6 +156,30 @@ export function TestPanel({ usage, spending, status, onClose }: Props) {
 
   function triggerScrape() {
     chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
+  }
+
+  async function runSlowScrapeTest() {
+    setSlowTestStep('notify');
+    setSlowTestLog([]);
+    setSlowTestSamples([]);
+
+    // Step 1: 推送通知消息到 inbox
+    setSlowTestLog(['[INFO] Step 1/5 — 推送通知消息到信箱…']);
+    await new Promise(r => setTimeout(r, 400));
+
+    // Step 2: 打开信箱（视觉提示，实际由用户在 header 查看）
+    setSlowTestStep('inbox');
+    setSlowTestLog(prev => ['[INFO] Step 2/5 — 信箱已更新，请查看右上角信箱按钮', ...prev]);
+    await new Promise(r => setTimeout(r, 600));
+
+    // Step 3: 触发慢速采集
+    setSlowTestStep('scraping');
+    setSlowTestLog(prev => ['[INFO] Step 3/5 — 触发慢速 Token 详情采集…', ...prev]);
+    chrome.runtime.sendMessage({ type: 'SLOW_SCRAPE_START' }).catch(() => {
+      setSlowTestStep('error');
+      setSlowTestLog(prev => ['[ERROR] 发送 SLOW_SCRAPE_START 失败', ...prev]);
+    });
+    // 后续步骤由 INBOX_MESSAGE / SLOW_SCRAPE_DONE 消息驱动
   }
 
   function runHoverTest() {
@@ -504,6 +554,97 @@ export function TestPanel({ usage, spending, status, onClose }: Props) {
         )}
 
         <div className="h-4" />
+      </div>
+
+      {/* ── Test 7 · 慢速 Token 采集全流程测试 ── */}
+      <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <span className="font-medium text-zinc-700 dark:text-zinc-300 text-[13px]">
+              Test 7 · 慢速 Token 采集全流程
+            </span>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              5步验证：通知 → 信箱 → 采集 → 刷新页面 → 显示含 5 列数据的前 5 行
+            </p>
+          </div>
+          <button
+            onClick={runSlowScrapeTest}
+            disabled={slowTestStep !== 'idle' && slowTestStep !== 'done' && slowTestStep !== 'error'}
+            className="px-3 py-1.5 text-xs rounded-lg bg-brand/10 hover:bg-brand/20 text-brand disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            {slowTestStep === 'idle' || slowTestStep === 'done' || slowTestStep === 'error' ? '运行' : '运行中…'}
+          </button>
+        </div>
+
+        {/* 步骤进度指示 */}
+        {slowTestStep !== 'idle' && (
+          <div className="flex gap-1.5 mb-2 flex-wrap">
+            {(['notify', 'inbox', 'scraping', 'success', 'refresh', 'done'] as const).map((step, i) => {
+              const steps = ['notify', 'inbox', 'scraping', 'success', 'refresh', 'done'];
+              const currentIdx = steps.indexOf(slowTestStep);
+              const thisIdx = steps.indexOf(step);
+              const isDone  = currentIdx > thisIdx || slowTestStep === 'done';
+              const isActive = currentIdx === thisIdx;
+              return (
+                <div key={step} className="flex items-center gap-1">
+                  {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-[10px]">›</span>}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                    isActive ? 'bg-brand/15 text-brand font-medium' :
+                    isDone   ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400' :
+                    'text-zinc-400'
+                  }`}>
+                    {['通知', '信箱', '采集中', '成功', '刷新', '完成'][i]}
+                  </span>
+                </div>
+              );
+            })}
+            {slowTestStep === 'error' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/20 text-red-500">✗ 失败</span>
+            )}
+          </div>
+        )}
+
+        {/* 日志流 */}
+        {slowTestLog.length > 0 && (
+          <div className="bg-zinc-50 dark:bg-zinc-800 rounded-lg p-2 max-h-28 overflow-y-auto mb-2">
+            {slowTestLog.map((line, i) => (
+              <p key={i} className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 leading-relaxed">{line}</p>
+            ))}
+          </div>
+        )}
+
+        {/* 采集完成后显示前 5 条（含 breakdown 列） */}
+        {slowTestSamples.length > 0 && (
+          <div className="mt-2">
+            <p className="text-[11px] text-zinc-500 mb-1.5">✓ 前 5 条完整数据（含 Token 明细）：</p>
+            <div className="overflow-x-auto rounded-lg border border-zinc-100 dark:border-zinc-700">
+              <table className="text-[10px] font-mono w-full border-collapse">
+                <thead>
+                  <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-400">
+                    <th className="px-2 py-1 text-left">模型</th>
+                    <th className="px-2 py-1 text-right">Total</th>
+                    <th className="px-2 py-1 text-right">CacheR</th>
+                    <th className="px-2 py-1 text-right">CacheW</th>
+                    <th className="px-2 py-1 text-right">Input</th>
+                    <th className="px-2 py-1 text-right">Output</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {slowTestSamples.map((r, i) => (
+                    <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800">
+                      <td className="px-2 py-1 text-zinc-600 dark:text-zinc-300 max-w-[80px] truncate">{r.model}</td>
+                      <td className="px-2 py-1 text-right text-zinc-500">{r.tokens.toLocaleString()}</td>
+                      <td className="px-2 py-1 text-right text-zinc-400">{r.tokenBreakdown?.cacheRead  != null ? r.tokenBreakdown.cacheRead.toLocaleString()  : <span className="text-zinc-300 dark:text-zinc-600">-</span>}</td>
+                      <td className="px-2 py-1 text-right text-zinc-400">{r.tokenBreakdown?.cacheWrite != null ? r.tokenBreakdown.cacheWrite.toLocaleString() : <span className="text-zinc-300 dark:text-zinc-600">-</span>}</td>
+                      <td className="px-2 py-1 text-right text-zinc-400">{r.tokenBreakdown?.input      != null ? r.tokenBreakdown.input.toLocaleString()      : <span className="text-zinc-300 dark:text-zinc-600">-</span>}</td>
+                      <td className="px-2 py-1 text-right text-zinc-400">{r.tokenBreakdown?.output     != null ? r.tokenBreakdown.output.toLocaleString()     : <span className="text-zinc-300 dark:text-zinc-600">-</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
     </div>

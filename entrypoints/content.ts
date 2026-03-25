@@ -10,16 +10,279 @@ import {
   sleep,
   click30dFilter,
 } from '../utils/parser';
-import type { ScrapeParams } from '../utils/types';
+import type { ScrapeParams, TokenBreakdown } from '../utils/types';
+import { userNameStorage } from '../utils/storage';
 
-const USAGE_SELECTOR = '.dashboard-table-rows';
-const SCRAPE_TIMEOUT_MS = 15_000;
+const USAGE_SELECTOR     = '.dashboard-table-rows';
+const SCRAPE_TIMEOUT_MS  = 20_000;
+const SLOW_SCRAPE_MAX_MS = 20 * 60 * 1_000; // 20 分钟硬上限
+const SLOW_STALE_MS      = 30_000;           // 30 秒无新数据 → 超时
+
+/** 慢速采集取消标志，由 SLOW_SCRAPE_CANCEL 消息设置 */
+let slowScrapeCancelled = false;
+/** 正常采集取消标志，由 CANCEL_SCRAPE 消息设置（background 不再导航离开，靠此标志中止） */
+let normalScrapeCancelled = false;
+
+// ─── 慢速采集专用可中断工具 ────────────────────────────────────────────────────
+
+/**
+ * 可中断的 sleep：每 50ms 检查一次 slowScrapeCancelled，
+ * 收到取消信号后立即 resolve（不等满 ms）。
+ */
+async function sleepCancellable(ms: number): Promise<void> {
+  const step = 50;
+  let elapsed = 0;
+  while (elapsed < ms && !slowScrapeCancelled) {
+    await sleep(Math.min(step, ms - elapsed));
+    elapsed += step;
+  }
+}
+
+/**
+ * 可中断的 waitForElement：每 150ms 查 DOM 一次，
+ * 收到取消信号时立即抛出 'cancelled'（不等到超时）。
+ */
+async function waitForElementCancellable(selector: string, timeoutMs: number): Promise<Element> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (slowScrapeCancelled) throw new Error('cancelled');
+    const el = document.querySelector(selector);
+    if (el) return el;
+    await sleep(150);
+  }
+  throw new Error(`waitForElement timeout: ${selector}`);
+}
 
 function detectPage(): 'usage' | 'spending' | null {
   const path = location.pathname;
   if (path.includes('/dashboard/usage')) return 'usage';
   if (path.includes('/dashboard/spending')) return 'spending';
   return null;
+}
+
+// ─── 慢速 hover 采集 ──────────────────────────────────────────────────────────
+
+/** 从当前页面分页文本（如 "3 / 8"）提取总页数 */
+function getTotalPages(): number {
+  const txt = document.querySelector('span.mx-2.text-base.font-medium')?.textContent?.trim() ?? '';
+  const m = txt.match(/\d+\s*\/\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+/** 从行 DOM 提取 "dateISO|modelTitle" 唯一键（与 usageStorage 中 r.dt|r.model 对齐） */
+function extractRowKey(row: Element): string | null {
+  const cells = Array.from(row.querySelectorAll('[role="cell"]'));
+  if (cells.length < 3) return null;
+  const rawDt = cells[0].querySelector('span[title]')?.getAttribute('title')
+             ?? cells[0].textContent?.trim() ?? '';
+  if (!rawDt) return null;
+  // 与 parseRow 保持一致：优先解析为 ISO，失败则保留原始字符串
+  const parsedDate = new Date(rawDt);
+  const dt = isNaN(parsedDate.getTime()) ? rawDt : parsedDate.toISOString();
+  const model = cells[2].querySelector('span[title]')?.getAttribute('title')
+             ?? cells[2].textContent?.trim() ?? '';
+  if (!dt || !model) return null;
+  return `${dt}|${model}`;
+}
+
+/**
+ * 对一个 hover-trigger 元素执行合成事件，等待 Radix HoverCard portal 出现，
+ * 解析 Token 明细（Cache Read / Cache Write / Input / Output）。
+ *
+ * 策略（三步）：
+ *  1. 先检查已有 closed portal（Radix 复用 portal，第二次后 data-state=closed 但内容仍在）
+ *  2. 确保元素在视口内（scrollIntoView），触发合成 hover 事件
+ *  3. 等待 portal 变成 open 状态（最多 2.5s）
+ */
+async function hoverAndParseBreakdown(trigger: HTMLElement): Promise<TokenBreakdown | null> {
+  // ── 1. 先尝试读已有 portal（避免重复 hover 的副作用） ────────────────────
+  // 找离 trigger 最近的 portal：遍历所有已有 portal，解析后返回第一个有数据的
+  const existing = Array.from(document.querySelectorAll('[data-radix-popper-content-wrapper]'));
+  // 注意：Radix HoverCard 每个 trigger 对应独立 portal，尝试精确绑定是困难的
+  // 这里的策略：hover 触发后 data-state 变为 open，先记录当前 open portal 的内容
+  const openBefore = existing.find(p => p.querySelector('[data-state="open"]'));
+  if (openBefore) {
+    // 有另一行正在悬停，跳过（避免读错数据）
+  }
+
+  // ── 2. scroll into view + 触发 hover ─────────────────────────────────────
+  trigger.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  await sleep(50); // 等待滚动完成
+
+  const rect = trigger.getBoundingClientRect();
+  const cx   = rect.left + rect.width / 2;
+  const cy   = rect.top  + rect.height / 2;
+  const base: PointerEventInit = {
+    bubbles: true, cancelable: true, composed: true, clientX: cx, clientY: cy,
+  };
+
+  let captured: Element | null = null;
+  const obs = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node instanceof HTMLElement && node.hasAttribute('data-radix-popper-content-wrapper'))
+          captured = node;
+      }
+      if (m.type === 'attributes' && m.target instanceof HTMLElement) {
+        const w = m.target.closest?.('[data-radix-popper-content-wrapper]');
+        if (w && (m.target as HTMLElement).dataset.state === 'open') captured = w;
+      }
+    }
+  });
+  obs.observe(document.body, {
+    childList: true, subtree: true,
+    attributes: true, attributeFilter: ['data-state'],
+  });
+
+  trigger.dispatchEvent(new PointerEvent('pointerover',  { ...base, pointerId: 1 }));
+  trigger.dispatchEvent(new PointerEvent('pointerenter', { ...base, pointerId: 1 }));
+  trigger.dispatchEvent(new MouseEvent('mouseenter', { ...base }));
+  trigger.dispatchEvent(new MouseEvent('mouseover',  { ...base }));
+
+  // ── 3. 等待 portal open（最多 2.5s，Radix 默认 openDelay=700ms）───────────
+  await new Promise<void>(resolve => {
+    const deadline = setTimeout(() => { obs.disconnect(); resolve(); }, 2_500);
+    const poll = setInterval(() => {
+      if (captured || slowScrapeCancelled) {
+        clearInterval(poll); clearTimeout(deadline); obs.disconnect(); resolve();
+      }
+    }, 50);
+  });
+
+  // 如果等待超时，尝试读任意 open 状态的 portal 作为 fallback
+  if (!captured) {
+    const openPortal = document.querySelector('[data-radix-popper-content-wrapper] [data-state="open"]');
+    if (openPortal) captured = openPortal.closest('[data-radix-popper-content-wrapper]');
+  }
+
+  // 离开
+  trigger.dispatchEvent(new PointerEvent('pointerout',   { ...base, pointerId: 1 }));
+  trigger.dispatchEvent(new PointerEvent('pointerleave', { ...base, pointerId: 1 }));
+  trigger.dispatchEvent(new MouseEvent('mouseleave', { ...base }));
+
+  if (!captured) return null;
+
+  // 从 portal 解析五行数据
+  const raw: Record<string, number> = {};
+  (captured as Element).querySelectorAll('.flex.justify-between').forEach(row => {
+    const spans = Array.from(row.querySelectorAll('span'));
+    if (spans.length < 2) return;
+    const label = spans[0].textContent?.trim() ?? '';
+    const value = parseInt((spans[spans.length - 1].textContent ?? '').replace(/[^0-9]/g, ''), 10);
+    if (label && !isNaN(value)) raw[label] = value;
+  });
+
+  const cacheRead  = raw['Cache Read']  ?? 0;
+  const cacheWrite = raw['Cache Write'] ?? 0;
+  const input      = raw['Input']       ?? 0;
+  const output     = raw['Output']      ?? 0;
+
+  if (cacheRead + cacheWrite + input + output === 0) return null;
+  return { cacheRead, cacheWrite, input, output };
+}
+
+/**
+ * 慢速全量 hover 采集：遍历所有分页，每行 hover 取 Token 明细。
+ *
+ * 守卫（仅两条）：① 退出登录  ② 账号切换
+ * 超时机制：30s 无新行数据 → 主动中止
+ * 取消：检查 slowScrapeCancelled 标志
+ *
+ * 每页完成后发送 SLOW_SCRAPE_PAGE 给 background，由 background 合并写入 storage 并推 inbox 消息。
+ */
+async function slowScrapeAllPages(): Promise<void> {
+  let lastDataAt = Date.now();
+  let pageNum    = 1;
+
+  const storedName = await userNameStorage.getValue();
+
+  while (!slowScrapeCancelled) {
+    // ── 等待表格加载 ─────────────────────────────────────────────────────────
+    try {
+      await waitForElementCancellable(USAGE_SELECTOR, 10_000);
+    } catch {
+      if (slowScrapeCancelled) return; // 取消导致的退出，静默处理
+      chrome.runtime.sendMessage({
+        type: 'SLOW_SCRAPE_PAGE', page: pageNum, totalPages: 0,
+        rowsUpdated: 0, breakdown: {}, error: '等待表格超时',
+      }).catch(() => {});
+      return;
+    }
+    await sleepCancellable(400);
+
+    // ── 守卫 1: 登录 ──────────────────────────────────────────────────────────
+    if (!isLoggedIn()) {
+      chrome.runtime.sendMessage({
+        type: 'SLOW_SCRAPE_PAGE', page: pageNum, totalPages: 0,
+        rowsUpdated: 0, breakdown: {}, error: '已退出登录',
+      }).catch(() => {});
+      return;
+    }
+
+    // ── 守卫 2: 账号切换（storedName 有效才比对） ─────────────────────────────
+    const currentName = readCurrentUserId();
+    if (currentName !== 'unknown' && storedName !== 'unknown' && currentName !== storedName) {
+      chrome.runtime.sendMessage({
+        type: 'SLOW_SCRAPE_PAGE', page: pageNum, totalPages: 0,
+        rowsUpdated: 0, breakdown: {}, error: `账号已切换（${currentName} ≠ ${storedName}）`,
+      }).catch(() => {});
+      return;
+    }
+
+    const totalPages   = getTotalPages();
+    const rows         = Array.from(document.querySelectorAll(`${USAGE_SELECTOR} > *`));
+    const pageBreakdown: Record<string, TokenBreakdown> = {};
+    let rowsUpdated    = 0;
+
+    for (const row of rows) {
+      if (slowScrapeCancelled) break; // 收到取消指令立刻中断当前页剩余行
+
+      // 插件 context 失效（extension disabled / reloaded）→ 立刻退出
+      if (!chrome.runtime?.id) { slowScrapeCancelled = true; break; }
+
+      // 30s 无新数据 → 超时
+      if (Date.now() - lastDataAt > SLOW_STALE_MS) {
+        chrome.runtime.sendMessage({
+          type: 'SLOW_SCRAPE_PAGE', page: pageNum, totalPages,
+          rowsUpdated: 0, breakdown: {}, error: '30秒无新数据，自动超时',
+        }).catch(() => {});
+        return;
+      }
+
+      const key = extractRowKey(row);
+      if (!key) continue;
+
+      const cells = Array.from(row.querySelectorAll('[role="cell"]'));
+      if (cells.length < 4) continue;
+      const tokenCell = cells[3];
+      const trigger   = tokenCell.querySelector<HTMLElement>('.inline-block.cursor-help[data-state]')
+                     ?? tokenCell.querySelector<HTMLElement>('.inline-block[data-state]');
+      if (!trigger) continue;
+
+      const breakdown = await hoverAndParseBreakdown(trigger);
+      if (breakdown) {
+        pageBreakdown[key] = breakdown;
+        rowsUpdated++;
+        lastDataAt = Date.now();
+      }
+
+      await sleepCancellable(150); // 温柔节奏，不触发速率限制
+    }
+
+    // ── 上报本页结果 ──────────────────────────────────────────────────────────
+    chrome.runtime.sendMessage({
+      type: 'SLOW_SCRAPE_PAGE', page: pageNum, totalPages, rowsUpdated, breakdown: pageBreakdown,
+    }).catch(() => {});
+
+    if (slowScrapeCancelled) break;
+
+    // ── 翻到下一页 ────────────────────────────────────────────────────────────
+    const next = document.querySelector<HTMLButtonElement>('[aria-label="Next page"]');
+    if (!next || next.getAttribute('aria-disabled') === 'true') break;
+    next.click();
+    await sleepCancellable(800);
+    pageNum++;
+  }
 }
 
 // ─── Token 详情 hover 测试 ────────────────────────────────────────────────────
@@ -352,17 +615,17 @@ function readCurrentUserId(): string {
 /**
  * 提交前实时运行三条守卫：
  *   1. isLoggedIn — 重新检测 DOM 登录状态
- *   2. httpOk     — 先查 navigator.onLine（绕过 SW 缓存），再做 HEAD 请求
- *   3. userId     — 对比采集开始时的用户 ID（防账号切换）
+ *   2. httpOk     — 先查 navigator.onLine，再做 HEAD 请求
+ *   3. userId     — 与持久化名字库比对
+ *      - 当前 = 'unknown' → 页面未渲染用户信息 → FAIL
+ *      - 名字库为 'unknown' 或与当前相同 → 写入名字库 → PASS
+ *      - 名字不同 → 账号已切换 → FAIL（TODO: 弹窗确认）
  */
-async function runPreCommitGuard(
-  initialUserId: string,
-): Promise<{ valid: boolean; reason?: string }> {
-  const currentIsLoggedIn = isLoggedIn();
+async function runPreCommitGuard(): Promise<{ valid: boolean; reason?: string }> {
+  // Guard 1: 登录状态
+  if (!isLoggedIn()) return { valid: false, reason: '用户已退出登录' };
 
-  // ① 先检查浏览器底层网络状态（SW 无法绕过）
-  // ② 如果 onLine=true，再做 HEAD 请求做二次确认
-  //    cache: 'no-cache' 强制向服务器重新验证（no-store 不阻止 SW 返回缓存）
+  // Guard 2: 网络状态（先 onLine 底层，再 HEAD 二次确认）
   let httpOk = navigator.onLine;
   if (httpOk) {
     try {
@@ -377,29 +640,39 @@ async function runPreCommitGuard(
       httpOk = false;
     }
   }
+  if (!httpOk) return { valid: false, reason: '网络异常（HTTP 非 200）' };
 
-  const checks: ScrapeValidationChecks = {
-    isLoggedIn: currentIsLoggedIn,
-    httpOk,
-    userId:  readCurrentUserId(),
-    storedId: initialUserId,
+  // Guard 3: 用户 ID 名字库比对
+  const currentName = readCurrentUserId();
+
+  // 当前为 unknown → 页面未正常渲染用户信息，视为异常状态
+  if (currentName === 'unknown') {
+    return { valid: false, reason: '无法读取用户信息（DOM 用户头像未就绪）' };
+  }
+
+  const storedName = await userNameStorage.getValue();
+
+  if (storedName === 'unknown' || storedName === currentName) {
+    // 首次记录 或 账号一致 → 更新名字库，通过
+    if (storedName !== currentName) {
+      await userNameStorage.setValue(currentName);
+    }
+    return { valid: true };
+  }
+
+  // 账号已切换 → 拒绝写入，TODO: 弹窗让用户确认是否切换账号
+  return {
+    valid: false,
+    reason: `账号已切换（当前 "${currentName}" ≠ 已知账号 "${storedName}"）`,
   };
-  return validateBeforeCommit(checks);
 }
-
-// 采集完成后、写入 storage 前的等待窗口（毫秒）。
-// 正式发布时改为 0；当前保留 5s 供手动验证中断场景（退出登录 / 断网）。
-const PRE_COMMIT_DELAY_MS = 5_000;
 
 async function doScrape(
   page: 'usage' | 'spending',
   isIncremental: boolean,
   cutoffIso: string | null,
 ): Promise<void> {
-  // ── Step 1: 记录采集开始时的用户 ID（ID 守卫基准） ────────────────────────
-  const initialUserId = readCurrentUserId();
-
-  // ── Step 2: 采集 → 写入临时变量，不直接发往 storage ─────────────────────
+  // ── Step 1: 采集 → 写入临时变量，不直接发往 storage ─────────────────────
   let usageRecords: Awaited<ReturnType<typeof scrapeAllPages>> | null = null;
   let spendingData: ReturnType<typeof parseSpending>           | null = null;
 
@@ -414,11 +687,16 @@ async function doScrape(
     console.log('[cursor-stats] spending collected — 等待守卫校验…');
   }
 
-  // ── Step 3: 守卫等待窗口（当前 5s，便于手动触发中断场景）────────────────
-  await sleep(PRE_COMMIT_DELAY_MS);
-
-  // ── Step 4: 提交前三条防线校验 ───────────────────────────────────────────
-  const guard = await runPreCommitGuard(initialUserId);
+  // ── Step 2: 提交前三条防线校验 ───────────────────────────────────────────
+  // 先检查是否收到取消指令
+  if (normalScrapeCancelled) {
+    normalScrapeCancelled = false;
+    chrome.runtime.sendMessage({
+      type: 'SCRAPE_ERROR', error: '手动取消采集', errorType: 'cancelled', page,
+    }).catch(() => {});
+    return;
+  }
+  const guard = await runPreCommitGuard();
   if (!guard.valid) {
     console.warn(`[cursor-stats] 提交前校验失败 → 数据丢弃: ${guard.reason}`);
     const errorType = guard.reason?.includes('退出登录') ? 'logout' : 'generic';
@@ -446,7 +724,11 @@ async function runScrape(page: 'usage' | 'spending'): Promise<void> {
   if (page === 'usage') {
     await waitForElement(USAGE_SELECTOR, 15_000);
   } else {
-    await waitForElement('main', 8_000).catch(() => sleep(2_000));
+    // spending 页面：等待套餐详情或按需区块渲染，比 main 更精确
+    await waitForElement(
+      '.dashboard-section, p[class*="font-semibold"], #on-demand-usage',
+      12_000,
+    ).catch(() => sleep(3_000));
   }
 
   // 通知 background 就绪，拿回采集参数
@@ -575,6 +857,18 @@ export default defineContentScript({
         return true;
       }
 
+      if (msg.type === 'SLOW_SCRAPE_CANCEL') {
+        slowScrapeCancelled = true;
+        sendResponse({ ok: true });
+        return false;
+      }
+
+      if (msg.type === 'CANCEL_SCRAPE') {
+        normalScrapeCancelled = true;
+        sendResponse({ ok: true });
+        return false;
+      }
+
     });
 
     // ── 以下是采集逻辑，仅在 usage / spending 页面运行 ──────────────────────────
@@ -588,25 +882,72 @@ export default defineContentScript({
       return;
     }
 
-    // 30 秒全局超时：任何阶段卡死都会触发 SCRAPE_ERROR，background 重置状态
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('scrape timeout (30s)')), SCRAPE_TIMEOUT_MS),
-    );
-
+    // ── 等待 SPA 内容渲染 ────────────────────────────────────────────────────
     try {
-      await Promise.race([runScrape(page), timeout]);
-    } catch (e) {
-      console.error('[cursor-stats] scrape error', e);
-      const msg = e instanceof Error ? e.message : String(e);
-      // Extension context invalidated：扩展热重载导致，静默退出即可，不尝试 sendMessage
-      if (msg.includes('context invalidated') || msg.includes('Extension context')) return;
-      const errorType = msg.includes('timeout') ? 'timeout' : 'generic';
+      if (page === 'usage') {
+        await waitForElement(USAGE_SELECTOR, 20_000);
+      } else {
+        await waitForElement(
+          '.dashboard-section, p[class*="font-semibold"], #on-demand-usage', 12_000,
+        ).catch(() => sleep(3_000));
+      }
+    } catch {
+      // 等待超时：按超时错误处理
       chrome.runtime.sendMessage({
-        type: 'SCRAPE_ERROR',
-        error: msg,
-        errorType,
-        page,
+        type: 'SCRAPE_ERROR', error: 'scrape timeout (20s)', errorType: 'timeout', page,
       }).catch(() => {});
+      return;
+    }
+
+    // ── 通知 background 就绪，拿回采集参数 ──────────────────────────────────
+    let params: ScrapeParams | null = null;
+    try {
+      params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page }) as ScrapeParams | null;
+    } catch {
+      // background SW 未响应（极少情况），按全量兜底
+    }
+
+    // ── 路由：慢速 hover 采集 vs 正常采集 ───────────────────────────────────
+    if (page === 'usage' && params?.slowMode) {
+      // 慢速路径：20 分钟硬上限 + 内部 30s stale 检测
+      const maxTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('slow scrape timeout (20min)')), SLOW_SCRAPE_MAX_MS),
+      );
+      try {
+        slowScrapeCancelled = false;
+        await Promise.race([slowScrapeAllPages(), maxTimeout]);
+        // Promise.race 正常 resolve（无异常）
+        if (!slowScrapeCancelled) {
+          // 所有页自然完成，通知 background 写入 storage 并结束
+          chrome.runtime.sendMessage({ type: 'SLOW_SCRAPE_ALL_DONE' }).catch(() => {});
+        }
+        // 若 slowScrapeCancelled=true，说明用户已取消，background 那边已处理，无需再发
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        if (errMsg.includes('context invalidated') || errMsg.includes('Extension context')) return;
+        chrome.runtime.sendMessage({
+          type: 'SLOW_SCRAPE_PAGE', page: 0, totalPages: 0, rowsUpdated: 0, breakdown: {},
+          error: errMsg,
+        }).catch(() => {});
+      }
+    } else {
+      // 正常路径：20s 硬超时
+      const hardTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('scrape timeout (20s)')), SCRAPE_TIMEOUT_MS),
+      );
+      try {
+        await Promise.race([
+          doScrape(page, params?.isIncremental ?? false, params?.cutoffIso ?? null),
+          hardTimeout,
+        ]);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('context invalidated') || msg.includes('Extension context')) return;
+        const errorType = msg.includes('timeout') ? 'timeout' : 'generic';
+        chrome.runtime.sendMessage({
+          type: 'SCRAPE_ERROR', error: msg, errorType, page,
+        }).catch(() => {});
+      }
     }
   },
 });

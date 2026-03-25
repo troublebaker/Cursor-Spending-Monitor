@@ -238,12 +238,22 @@ export function parseSpendingFromText(raw: string): SpendingData {
     apiPct,
     demandUsed,
     demandLimit,
+    // monthlyLimitMode / monthlyLimitAmount 由 parseSpending() DOM 版本补充
+    monthlyLimitMode: undefined,
+    monthlyLimitAmount: undefined,
   };
 }
 
-/** cursor.com spending 页面直接调用的包装：读取当前页面 innerText */
+/** cursor.com spending 页面直接调用的包装：读取当前页面 innerText，并补充 DOM 解析数据 */
 export function parseSpending(): SpendingData {
-  return parseSpendingFromText(document.body.innerText ?? '');
+  const data = parseSpendingFromText(document.body.innerText ?? '');
+  // 月用量上限需要读取 DOM 元素（button 文本、input value），innerText 无法可靠提取
+  const onDemand = parseOnDemandInfo(document);
+  if (onDemand) {
+    data.monthlyLimitMode   = onDemand.mode ?? undefined;
+    data.monthlyLimitAmount = onDemand.amount ?? null;
+  }
+  return data;
 }
 
 // ─── 用户信息解析（姓名 + 套餐） ───────────────────────────────────────────────

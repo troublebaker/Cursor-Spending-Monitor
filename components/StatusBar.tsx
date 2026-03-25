@@ -12,6 +12,7 @@ interface Props {
   lastResult: { ok: boolean; added: number; errorType?: string } | null;
   onModeChange: (mode: ScrapeMode) => void;
   onScrapeNow: () => void;
+  onScrapeWithToken: () => void;
   onAbort: () => void;
   onClearData: () => void;
 }
@@ -24,8 +25,9 @@ function timeAgoShort(iso: string): string {
   return `${Math.floor(min / 60)}h`;
 }
 
-function nextIntervalLabel(noDataCount: number): string {
-  const min = Math.min(Math.pow(2, noDataCount), 60);
+function nextIntervalLabel(noDataCount: number, mode: ScrapeMode): string {
+  const baseMin = mode === 'auto_calm' ? 5 : 1;
+  const min = Math.min(baseMin * Math.pow(2, noDataCount), 60);
   return min >= 60 ? '60m' : `${min}m`;
 }
 
@@ -38,7 +40,7 @@ function getStageText(elapsedSec: number, t: LocaleDict): string {
 
 export function StatusBar({
   t, isRunning, loginRequired, lastScrapeAt, scrapeMode, noDataCount,
-  lastResult, onModeChange, onScrapeNow, onAbort, onClearData,
+  lastResult, onModeChange, onScrapeNow, onScrapeWithToken, onAbort, onClearData,
 }: Props) {
   // ── 假进度条（CSS transition 驱动） ──────────────────────────────────────────
   const [progress, setProgress] = useState(0);
@@ -152,11 +154,11 @@ export function StatusBar({
           <span className="truncate max-w-[140px]">{statusText}</span>
         </span>
 
-        {/* 右：模式 + 下次间隔 + 采集按钮 */}
+        {/* 右：模式 + 下次间隔 + 中止按钮（采集中） */}
         <div className="flex items-center gap-2 shrink-0">
-          {scrapeMode === 'auto' && !isRunning && (
+          {(scrapeMode === 'auto' || scrapeMode === 'auto_calm') && !isRunning && (
             <span className="text-zinc-400 dark:text-zinc-600">
-              {t.nextUpdate} {nextIntervalLabel(noDataCount)}
+              {t.nextUpdate} {nextIntervalLabel(noDataCount, scrapeMode)}
             </span>
           )}
           <select
@@ -165,9 +167,9 @@ export function StatusBar({
             className="text-xs bg-transparent border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-0.5 text-zinc-600 dark:text-zinc-400 cursor-pointer"
           >
             <option value="auto">{t.scrapeModeAuto}</option>
+            <option value="auto_calm">{t.scrapeModeAutoCalm}</option>
             <option value="manual">{t.scrapeModeManual}</option>
           </select>
-          {/* 采集中：显示中止按钮；采集完：显示立即采集 + 删除按钮 */}
           {isRunning ? (
             <button
               onClick={onAbort}
@@ -177,29 +179,40 @@ export function StatusBar({
               ✕
             </button>
           ) : (
-            <>
-              <button
-                onClick={onScrapeNow}
-                title={t.scrapeNow}
-                className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 transition-colors text-base leading-none"
-              >
-                ↻
-              </button>
-              <button
-                onClick={handleClearClick}
-                title={confirmClear ? '再次点击确认清空所有记录' : '清空所有记录'}
-                className={`w-6 h-6 flex items-center justify-center rounded-md transition-colors text-sm leading-none ${
-                  confirmClear
-                    ? 'bg-red-100 dark:bg-red-900/40 text-red-500 hover:bg-red-200 dark:hover:bg-red-900/60'
-                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 dark:text-zinc-500'
-                }`}
-              >
-                {confirmClear ? '?' : '🗑'}
-              </button>
-            </>
+            <button
+              onClick={handleClearClick}
+              title={confirmClear ? '再次点击确认清空所有记录' : '清空所有记录'}
+              className={`w-6 h-6 flex items-center justify-center rounded-md transition-colors text-sm leading-none ${
+                confirmClear
+                  ? 'bg-red-100 dark:bg-red-900/40 text-red-500 hover:bg-red-200 dark:hover:bg-red-900/60'
+                  : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 dark:text-zinc-500'
+              }`}
+            >
+              {confirmClear ? '?' : '🗑'}
+            </button>
           )}
         </div>
       </div>
+
+      {/* 第二行：更新按钮（仅非采集中时显示） */}
+      {!isRunning && !loginRequired && (
+        <div className="px-3 pb-2 flex gap-2">
+          <button
+            onClick={onScrapeNow}
+            title={t.scrapeNow}
+            className="flex-1 py-1.5 text-xs font-medium rounded-lg bg-brand text-white hover:opacity-90 active:opacity-75 transition-opacity"
+          >
+            {t.scrapeNow}
+          </button>
+          <button
+            onClick={onScrapeWithToken}
+            title="更新数据（含 Token 输入/输出明细）"
+            className="flex-1 py-1.5 text-xs font-medium rounded-lg bg-brand/80 text-white hover:opacity-90 active:opacity-75 transition-opacity"
+          >
+            {t.scrapeNowWithToken}
+          </button>
+        </div>
+      )}
 
       {/* 进度条（3px 高，CSS transition 驱动） */}
       <div

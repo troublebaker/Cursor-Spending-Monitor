@@ -10,10 +10,13 @@ import {
   scrapeModeStorage,
   onboardedStorage,
   noTabReminderStorage,
+  inboxStorage,
+  slowScrapeStateStorage,
 } from '../../utils/storage';
-import type { UsageRecord, SpendingData, ScrapeMode } from '../../utils/types';
+import type { UsageRecord, SpendingData, ScrapeMode, InboxMessage } from '../../utils/types';
 import { SummaryCards } from '../../components/SummaryCards';
 import { SpendingCard } from '../../components/SpendingCard';
+import { OnDemandPanel } from '../../components/OnDemandPanel';
 import { CollapseSection } from '../../components/CollapseSection';
 import { DailyCallsChart } from '../../components/DailyCallsChart';
 import { DailyCostChart } from '../../components/DailyCostChart';
@@ -23,6 +26,7 @@ import { WelcomePage } from '../../components/WelcomePage';
 import { StatusBar } from '../../components/StatusBar';
 import { DebugPanel } from '../../components/DebugPanel';
 import { TestPanel } from '../../components/TestPanel';
+import { InboxPanel } from '../../components/InboxPanel';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -62,8 +66,15 @@ function App() {
   const prevIsRunningRef  = useRef(false);
   const prevUsageLengthRef = useRef(0);
 
-  // 测试面板开关
+  // 测试面板开关（仅 DEV 模式可用）
   const [showTest, setShowTest] = useState(false);
+
+  // 宽度切换
+  const [wideMode, setWideMode] = useState(false);
+
+  // InboxPanel 状态
+  const [inboxMessages,    setInboxMessages]    = useState<InboxMessage[]>([]);
+  const [slowScrapeRunning, setSlowScrapeRunning] = useState(false);
 
   // ── 初始化 + storage watch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -74,7 +85,9 @@ function App() {
       onboardedStorage.getValue(),
       scrapeModeStorage.getValue(),
       scrapeStateStorage.getValue(),
-    ]).then(([u, s, ob, sm, ss]) => {
+      inboxStorage.getValue(),
+      slowScrapeStateStorage.getValue(),
+    ]).then(([u, s, ob, sm, ss, inbox, sss]) => {
       setUsage(u);
       setSpending(s);
       setOnboarded(ob);
@@ -82,15 +95,23 @@ function App() {
       setIsRunning(ss.isRunning);
       setLastScrapeAt(ss.lastScrapeAt);
       setNoDataCount(ss.noDataCount);
-      // 恢复持久化的登录等待状态（侧边栏重新打开时也能正确显示/隐藏提示）
       setLoginRequired(ss.loginRequired ?? false);
+      setInboxMessages(inbox);
+      setSlowScrapeRunning(sss.isRunning);
 
-      // 注：打开侧边栏时不再自动触发采集，改为手动点击「立即采集」或 auto 模式 alarm 触发
+      // 侧边栏已打开：通知 background 重置指数衰减，按基准间隔重新调度
+      if (sm === 'auto' || sm === 'auto_calm') {
+        chrome.runtime.sendMessage({ type: 'REACTIVATE_AUTO' }).catch(() => {});
+      }
     });
 
     // 实时监听变化
     const unwatchUsage    = usageStorage.watch(v    => setUsage(v ?? []));
     const unwatchSpending = spendingStorage.watch(v => setSpending(v ?? null));
+    const unwatchInbox    = inboxStorage.watch(v    => setInboxMessages(v ?? []));
+    const unwatchSlowState = slowScrapeStateStorage.watch(v => {
+      if (v) setSlowScrapeRunning(v.isRunning);
+    });
     const unwatchState    = scrapeStateStorage.watch(v => {
       if (!v) return;
       setIsRunning(v.isRunning);
@@ -103,6 +124,8 @@ function App() {
     return () => {
       unwatchUsage();
       unwatchSpending();
+      unwatchInbox();
+      unwatchSlowState();
       unwatchState();
     };
   }, []);
@@ -126,6 +149,16 @@ function App() {
         // 10 秒后自动清除错误提示
         const id = setTimeout(() => setLastResult(null), 10_000);
         return () => clearTimeout(id);
+      }
+      if (msg.type === 'INBOX_MESSAGE') {
+        // background 广播 inbox 消息（实时更新，storage.watch 同步持久化部分）
+        setInboxMessages(prev => [msg.message as InboxMessage, ...prev].slice(0, 100));
+      }
+      if (msg.type === 'SLOW_SCRAPE_DONE') {
+        setSlowScrapeRunning(false);
+      }
+      if (msg.type === 'SLOW_SCRAPE_FAILED_SLOW') {
+        setSlowScrapeRunning(false);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -206,6 +239,22 @@ function App() {
     chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
   };
 
+  const handleScrapeWithToken = () => {
+    chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE_WITH_TOKEN' }).catch(() => {});
+  };
+
+  function handleToggleWidth() {
+    const next = !wideMode;
+    setWideMode(next);
+    if (next) {
+      // 宽模式：占屏幕可用宽度 60%
+      const w = Math.round(window.screen.availWidth * 0.6);
+      document.documentElement.style.minWidth = `${w}px`;
+    } else {
+      document.documentElement.style.minWidth = '';
+    }
+  }
+
   const handleAbort = () => {
     chrome.runtime.sendMessage({ type: 'CANCEL_SCRAPE' }).catch(() => {});
   };
@@ -245,6 +294,19 @@ function App() {
     setShowTest(false);
   };
 
+  const handleSlowScrapeStart = () => {
+    chrome.runtime.sendMessage({ type: 'SLOW_SCRAPE_START' }).catch(() => {});
+  };
+
+  const handleSlowScrapeCancel = () => {
+    chrome.runtime.sendMessage({ type: 'SLOW_SCRAPE_CANCEL' }).catch(() => {});
+  };
+
+  const handleInboxClear = async () => {
+    await inboxStorage.setValue([]);
+    setInboxMessages([]);
+  };
+
   // ── 渲染 ────────────────────────────────────────────────────────────────────
 
   // 初次加载中
@@ -270,7 +332,7 @@ function App() {
     <div className="min-h-screen bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-sans text-sm">
 
       {/* ── 测试面板（全屏覆盖，顶栏不显示） ── */}
-      {showTest && (
+      {import.meta.env.DEV && showTest && (
         <TestPanel
           usage={usage}
           spending={spending}
@@ -280,7 +342,7 @@ function App() {
       )}
 
       {/* ── 以下内容在测试面板打开时隐藏 ── */}
-      {!showTest && (<>
+      {!(import.meta.env.DEV && showTest) && (<>
 
       {/* ── 顶栏 ── */}
       <header className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-700 sticky top-0 bg-white dark:bg-zinc-900 z-10">
@@ -303,6 +365,15 @@ function App() {
             ))}
           </div>
           <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
+          {/* InboxPanel 触发器（位于语言/主题按钮中间） */}
+          <InboxPanel
+            messages={inboxMessages}
+            isRunning={slowScrapeRunning}
+            onStart={handleSlowScrapeStart}
+            onCancel={handleSlowScrapeCancel}
+            onClear={handleInboxClear}
+          />
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
           <div className="flex gap-1">
             {THEME_OPTIONS.map(({ value, icon }) => (
               <button
@@ -321,13 +392,43 @@ function App() {
             ))}
           </div>
           <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
-          {/* 测试面板入口 */}
+          {/* 测试面板入口（仅开发模式） */}
+          {import.meta.env.DEV && (
+            <button
+              onClick={handleOpenTest}
+              title="打开测试面板（自动暂停采集）"
+              className="w-7 h-7 flex items-center justify-center rounded-md text-base bg-zinc-100 hover:bg-amber-100 dark:bg-zinc-800 dark:hover:bg-amber-900/40 transition-colors"
+            >
+              ⚗️
+            </button>
+          )}
+          {/* 宽度切换按钮 */}
           <button
-            onClick={handleOpenTest}
-            title="打开测试面板（自动暂停采集）"
-            className="w-7 h-7 flex items-center justify-center rounded-md text-base bg-zinc-100 hover:bg-amber-100 dark:bg-zinc-800 dark:hover:bg-amber-900/40 transition-colors"
+            onClick={handleToggleWidth}
+            title={wideMode ? '缩窄侧边栏' : '展宽侧边栏（60%）'}
+            className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors"
           >
-            ⚗️
+            {wideMode ? (
+              // 收起：两箭头朝内
+              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 2 L3 5 L6 8" />
+                <path d="M10 2 L13 5 L10 8" />
+                <path d="M3 5 H13" />
+                <path d="M6 10 L3 13 L6 16" opacity="0" />
+                <path d="M4 11 H12" />
+                <path d="M6 14 L3 11 L6 8" opacity="0" />
+              </svg>
+            ) : (
+              // 展开：两箭头朝外
+              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 5 L5 2 L8 5" />
+                <path d="M8 5 L11 2 L14 5" />
+                <path d="M5 2 V8 M11 2 V8" />
+                <path d="M2 11 L5 14 L8 11" />
+                <path d="M8 11 L11 14 L14 11" />
+                <path d="M5 14 V8 M11 14 V8" />
+              </svg>
+            )}
           </button>
         </div>
       </header>
@@ -343,6 +444,7 @@ function App() {
         lastResult={lastResult}
         onModeChange={handleModeChange}
         onScrapeNow={handleScrapeNow}
+        onScrapeWithToken={handleScrapeWithToken}
         onAbort={handleAbort}
         onClearData={handleClearData}
       />
@@ -404,8 +506,19 @@ function App() {
         t={t}
       />
 
-      {/* ── 额度进度条（有 spending 数据才显示） ── */}
-      {spending && <SpendingCard spending={spending} t={t} />}
+      {/* ── Section 1：套餐 & 配额（有 spending 数据才显示） ── */}
+      {spending && (
+        <CollapseSection title={t.sectionPlan} defaultOpen>
+          <SpendingCard spending={spending} t={t} />
+        </CollapseSection>
+      )}
+
+      {/* ── Section 2：按需 & 月限（有 spending 数据才显示） ── */}
+      {spending && (
+        <CollapseSection title={t.sectionDemand} defaultOpen>
+          <OnDemandPanel spending={spending} t={t} />
+        </CollapseSection>
+      )}
 
       {/* ── 数据为空时提示 ── */}
       {usage.length === 0 && (
@@ -415,10 +528,17 @@ function App() {
         </div>
       )}
 
-      {/* ── 图表区（有数据才渲染） ── */}
+      {/* ── Section 3：明细记录（有数据才渲染，默认展开） ── */}
+      {usage.length > 0 && (
+        <CollapseSection title={t.detailTable} defaultOpen>
+          <RecordTable records={displayRecords} t={t} />
+        </CollapseSection>
+      )}
+
+      {/* ── 图表区（有数据才渲染，默认折叠，F05 后续开发） ── */}
       {usage.length > 0 && (
         <>
-          <CollapseSection title={t.dailyCalls} defaultOpen>
+          <CollapseSection title={t.dailyCalls}>
             <DailyCallsChart records={displayRecords} t={t} />
           </CollapseSection>
           <CollapseSection title={t.dailyCost}>
@@ -426,9 +546,6 @@ function App() {
           </CollapseSection>
           <CollapseSection title={t.topModels}>
             <ModelChart records={displayRecords} t={t} />
-          </CollapseSection>
-          <CollapseSection title={t.detailTable}>
-            <RecordTable records={displayRecords} t={t} />
           </CollapseSection>
         </>
       )}
