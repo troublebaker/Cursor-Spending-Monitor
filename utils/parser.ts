@@ -66,11 +66,36 @@ function parseTokenCount(text: string): number {
 }
 
 /**
- * 解析费用字符串。"Included…" → 0；"$0.0234" → 0.0234
+ * 解析费用字符串。
+ * 支持格式：
+ *   "$0.0234"       → 0.0234
+ *   "US$0.04"       → 0.04   （cursor.com 实际格式，带 ISO 货币代码前缀）
+ *   "HK$0.04"       → 0.04
+ *   "Included…"     → 0
+ *   "—" / "-" / ""  → 0
  */
 function parseCostValue(text: string): number {
+  if (!text || text === '—' || text === '-') return 0;
   if (text.toLowerCase().startsWith('included')) return 0;
-  return parseFloat(text.replace(/[$,]/g, '')) || 0;
+  // 移除货币代码前缀（0-3 个大写字母）+ "$"，再移除千位逗号
+  // 例：US$0.04 → 0.04 ; $0.0234 → 0.0234 ; HK$1,234.56 → 1234.56
+  const cleaned = text.replace(/[A-Za-z]{0,3}\$/g, '').replace(/,/g, '');
+  return parseFloat(cleaned) || 0;
+}
+
+/**
+ * 从 index 4 起扫描，找含 "$" 的费用单元格（支持 "US$"/"$" 等前缀）或以 "included" 开头的格。
+ * cursor.com 实际费用格式为 "US$0.04"，contains('$') 比 startsWith('$') 更健壮。
+ */
+function findCostCell(cells: Element[]): string {
+  for (let i = 4; i < cells.length; i++) {
+    const text = cells[i].textContent?.trim() ?? '';
+    if (text.includes('$') || text.toLowerCase().startsWith('included')) {
+      return text;
+    }
+  }
+  // 降级：返回 index 4 的原始文本（向后兼容）
+  return cells[4]?.textContent?.trim() ?? '';
 }
 
 export function parseRow(row: Element): UsageRecord | null {
@@ -109,13 +134,17 @@ export function parseRow(row: Element): UsageRecord | null {
   const tokensStr = effectiveCells[3].textContent?.trim() ?? '';
   const tokens = parseTokenCount(tokensStr);
 
-  // ── Cell 4: 费用 ──
-  const costStr = effectiveCells[4].textContent?.trim() ?? '';
+  // ── Cell 4+: 费用（扫描找含 $ 或 Included 的单元格，兼容新增列） ──
+  const costStr = findCostCell(effectiveCells);
   const cost = parseCostValue(costStr);
+  // 保留原始字符串用于展示（如 "US$0.04"），空/横线/Included 不保留
+  const costRaw = costStr && costStr !== '—' && costStr !== '-' && !costStr.toLowerCase().startsWith('included')
+    ? costStr
+    : undefined;
 
   if (!type || !model) return null;
 
-  return { dt, type, model, tokens, cost };
+  return { dt, type, model, tokens, cost, costRaw };
 }
 
 /**

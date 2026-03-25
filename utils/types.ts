@@ -13,9 +13,12 @@ export interface UsageRecord {
   type: string;    // "On-Demand" | "Included (Pro)"
   model: string;   // "claude-4.6-sonnet" | ...
   tokens: number;
-  cost: number;    // USD，4 位小数；Included 类型为 0
+  cost: number;       // 数值，用于求和/图表；Included 类型为 0
+  costRaw?: string;   // cursor.com 原始文本，如 "US$0.04"；优先用于展示
   /** 慢速 hover 采集填充；未采集时为 undefined，显示 '-' */
   tokenBreakdown?: TokenBreakdown;
+  /** 采集时的登录账号标识（email/用户名），旧数据兼容保持 undefined */
+  accountId?: string;
 }
 
 // ─── InboxPanel 消息 ──────────────────────────────────────────────────────────
@@ -91,7 +94,8 @@ export type ExtMessage =
   | { type: 'NOT_LOGGED_IN' }
   | { type: 'LOGIN_RESTORED' }
   // content → background：页面就绪，请求采集参数（background 通过 sendResponse 回复）
-  | { type: 'PAGE_READY'; page: 'usage' | 'spending' }
+  // detectedUser 由 content script 从页面 DOM 读取的登录用户名（若已能读取）
+  | { type: 'PAGE_READY'; page: 'usage' | 'spending'; detectedUser?: string }
   // sidepanel → background：触发立即采集 / 重新调度 alarm
   | { type: 'TRIGGER_SCRAPE' }
   // sidepanel → background：触发普通采集 + 采集完成后自动启动慢速 Token 采集
@@ -126,6 +130,9 @@ export type ExtMessage =
   | { type: 'SCRAPE_STATUS'; isRunning: boolean; lastScrapeAt: string | null }
   | { type: 'SCRAPE_FAILED'; errorType: 'logout' | 'timeout' | 'cancelled' | 'generic'; error: string }
   | { type: 'LOGIN_REQUIRED' }
+  // background → sidepanel：账号切换/不匹配通知
+  | { type: 'ACCOUNT_SWITCHED'; detectedUser: string }
+  | { type: 'ACCOUNT_MISMATCH'; detectedUser: string; selectedAccount: string }
   // ── 慢速 Token 采集（InboxPanel）──────────────────────────────────────────
   // sidepanel → background：控制指令
   | { type: 'SLOW_SCRAPE_START' }
@@ -147,4 +154,6 @@ export interface ScrapeParams {
   slowMode?: boolean;
   /** 已有 tokenBreakdown 的行 key 集合（慢速增量：跳过已采集行） */
   existingTokenKeys?: string[];
+  /** 当前 background 认可的 accountId，content script 应在采集后为每条记录加上此标识 */
+  accountId?: string;
 }

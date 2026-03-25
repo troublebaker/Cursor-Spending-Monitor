@@ -3,9 +3,9 @@ import { usageStorage, spendingStorage, scrapeStateStorage } from './storage';
 
 // ─── Usage 去重合并 ────────────────────────────────────────────────────────────
 
-/** 去重 key：dt|model|type|tokens（cursor.com 无唯一 ID，用组合字段） */
+/** 去重 key：包含 accountId，确保不同账号的同一条记录不互相去重 */
 function recordKey(r: UsageRecord): string {
-  return `${r.dt}|${r.model}|${r.type}|${r.tokens}`;
+  return `${r.dt}|${r.model}|${r.type}|${r.tokens}|${r.accountId ?? ''}`;
 }
 
 /**
@@ -27,11 +27,15 @@ export async function mergeRecords(newRecords: UsageRecord[]): Promise<number> {
   return added.length;
 }
 
-/** 返回本地最新一条记录的时间，用于增量爬取的 cutoff */
-export async function getLatestDt(): Promise<Date | null> {
+/** 返回指定账号最新一条记录的时间，用于增量爬取的 cutoff。
+ *  传入 accountId 时只看该账号的数据，避免跨账号污染 cutoff。
+ */
+export async function getLatestDt(accountId?: string): Promise<Date | null> {
   const records = await usageStorage.getValue();
-  if (records.length === 0) return null;
-  const d = new Date(records[0].dt);
+  const scoped = accountId ? records.filter(r => r.accountId === accountId) : records;
+  if (scoped.length === 0) return null;
+  // records 已按 dt 降序排列，取第一条即为最新
+  const d = new Date(scoped[0].dt);
   // 防御：若 dt 格式无法被 V8 解析（Invalid Date），降级为全量采集
   if (isNaN(d.getTime())) return null;
   return d;

@@ -1,13 +1,85 @@
 import { useState, useEffect, useRef } from 'react';
 import type { InboxMessage } from '../utils/types';
+import { useI18n } from '../utils/i18n';
+import type { LocaleDict } from '../utils/i18n';
+
+// ── 版本信息 Modal ────────────────────────────────────────────────────────────
+
+function VersionModal({ t, onClose }: { t: LocaleDict; onClose: () => void }) {
+  const version = chrome.runtime.getManifest().version;
+
+  function openGitHub() {
+    chrome.tabs.create({ url: 'https://github.com/troublebaker/Cursor-Spending-Monitor', active: true });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center"
+      onMouseDown={onClose}
+    >
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className="relative bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-6 w-72 mx-4 border border-zinc-200 dark:border-zinc-700"
+        onMouseDown={e => e.stopPropagation()}
+      >
+        {/* 关闭按钮 */}
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 transition-colors text-sm"
+        >
+          ✕
+        </button>
+
+        {/* 标题行 */}
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-brand flex items-center justify-center text-white text-sm font-bold flex-shrink-0 select-none">
+            cs
+          </div>
+          <div>
+            <p className="font-semibold text-zinc-900 dark:text-zinc-100 text-sm">Cursor Spending Monitor</p>
+            <p className="text-xs text-zinc-400">v{version}</p>
+          </div>
+        </div>
+
+        {/* 描述 */}
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4 leading-relaxed">
+          {t.aboutDesc}
+        </p>
+
+        {/* 元数据 */}
+        <div className="space-y-1.5 text-xs mb-4">
+          {[
+            ['License', 'MIT'],
+            ['Author',  'troublebaker'],
+          ].map(([k, v]) => (
+            <div key={k} className="flex justify-between text-zinc-400">
+              <span>{k}</span><span className="text-zinc-500 dark:text-zinc-300">{v}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* GitHub 按钮 */}
+        <button
+          onClick={openGitHub}
+          className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-xs text-zinc-600 dark:text-zinc-300 transition-colors"
+        >
+          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          {t.aboutGitHub}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ── 时间格式化 ────────────────────────────────────────────────────────────────
 
-function relativeTime(ts: string): string {
+function relativeTime(ts: string, t: LocaleDict): string {
   const diff = Date.now() - new Date(ts).getTime();
-  if (diff < 60_000)  return '刚刚';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}分钟前`;
-  return `${Math.floor(diff / 3600_000)}小时前`;
+  if (diff < 60_000)   return t.justNow;
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} ${t.minutesAgo}`;
+  return `${Math.floor(diff / 3600_000)} ${t.hoursAgo}`;
 }
 
 // ── 消息图标 ─────────────────────────────────────────────────────────────────
@@ -46,7 +118,9 @@ interface Props {
 // ── 组件 ──────────────────────────────────────────────────────────────────────
 
 export function InboxPanel({ messages, isRunning, onClear }: Props) {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
+  const [showVersion, setShowVersion] = useState(false);
   const [lastSeenCount, setLastSeenCount] = useState(messages.length);
   const panelRef   = useRef<HTMLDivElement>(null);
   const listRef    = useRef<HTMLDivElement>(null);
@@ -85,7 +159,7 @@ export function InboxPanel({ messages, isRunning, onClear }: Props) {
       {/* ── 触发按钮 ── */}
       <button
         onClick={handleToggle}
-        title="Token 详情采集信箱"
+        title={t.inboxSubtitle}
         className={[
           'relative w-7 h-7 flex items-center justify-center rounded-md text-base transition-colors',
           isOpen
@@ -115,10 +189,9 @@ export function InboxPanel({ messages, isRunning, onClear }: Props) {
       {isOpen && (
         <div
           className={[
-            'absolute right-0 top-full mt-1.5 w-72 z-50',
+            'absolute right-0 top-full mt-1.5 w-[374px] z-50',
             'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700',
             'rounded-xl shadow-xl overflow-hidden',
-            'animate-slide-down',
           ].join(' ')}
           style={{ animation: 'slideDown 0.15s ease' }}
         >
@@ -131,25 +204,36 @@ export function InboxPanel({ messages, isRunning, onClear }: Props) {
               </div>
               <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">cursor-stats</span>
               <span className="text-[10px] text-zinc-400 px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-full">
-                Token 采集
+                {t.inboxSubtitle}
               </span>
             </div>
             {messages.length > 0 && (
               <button
                 onClick={onClear}
                 className="text-[10px] text-zinc-400 hover:text-red-400 transition-colors px-1"
-                title="清空消息"
               >
-                清空
+                {t.inboxClear}
               </button>
             )}
           </div>
 
+          {/* 置顶：版本信息入口 */}
+          <button
+            onClick={() => setShowVersion(true)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors group"
+          >
+            <span className="text-xs">📋</span>
+            <span className="flex-1 text-[11px] text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200 transition-colors">
+              {t.aboutTitle}
+            </span>
+            <span className="text-[10px] text-zinc-400">v{chrome.runtime.getManifest().version} ›</span>
+          </button>
+
           {/* 消息列表 */}
-          <div ref={listRef} className="overflow-y-auto max-h-56 divide-y divide-zinc-50 dark:divide-zinc-800/50">
+          <div ref={listRef} className="overflow-y-auto divide-y divide-zinc-50 dark:divide-zinc-800/50" style={{ maxHeight: 336 }}>
             {messages.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-zinc-400">
-                暂无消息，通过「更新数据+Token」按钮开始采集
+                {t.inboxEmpty}
               </div>
             ) : (
               messages.map(msg => (
@@ -167,7 +251,7 @@ export function InboxPanel({ messages, isRunning, onClear }: Props) {
                         />
                       </div>
                     )}
-                    <p className="text-[10px] text-zinc-400 mt-0.5">{relativeTime(msg.ts)}</p>
+                    <p className="text-[10px] text-zinc-400 mt-0.5">{relativeTime(msg.ts, t)}</p>
                   </div>
                 </div>
               ))
@@ -176,6 +260,9 @@ export function InboxPanel({ messages, isRunning, onClear }: Props) {
 
         </div>
       )}
+
+      {/* 版本信息浮窗 */}
+      {showVersion && <VersionModal t={t} onClose={() => setShowVersion(false)} />}
 
       {/* 滑入动画 keyframes（注入全局一次） */}
       <style>{`

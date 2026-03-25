@@ -664,25 +664,18 @@ async function runPreCommitGuard(): Promise<{ valid: boolean; reason?: string }>
 
   const storedName = await getUserName();
 
-  if (storedName === 'unknown' || storedName === currentName) {
-    // 首次记录 或 账号一致 → 更新名字库，通过
-    if (storedName !== currentName) {
-      await setUserName(currentName);
-    }
-    return { valid: true };
+  // 账号切换由 background 负责通知 UI；content 只需同步本地缓存名并放行
+  if (storedName !== currentName) {
+    await setUserName(currentName);
   }
-
-  // 账号已切换 → 拒绝写入，TODO: 弹窗让用户确认是否切换账号
-  return {
-    valid: false,
-    reason: `账号已切换（当前 "${currentName}" ≠ 已知账号 "${storedName}"）`,
-  };
+  return { valid: true };
 }
 
 async function doScrape(
   page: 'usage' | 'spending',
   isIncremental: boolean,
   cutoffIso: string | null,
+  accountId?: string,
 ): Promise<void> {
   // ── Step 1: 采集 → 写入临时变量，不直接发往 storage ─────────────────────
   let usageRecords: Awaited<ReturnType<typeof scrapeAllPages>> | null = null;
@@ -723,8 +716,12 @@ async function doScrape(
 
   // ── Step 5: 校验通过 → 写入 storage ──────────────────────────────────────
   if (page === 'usage' && usageRecords !== null) {
-    chrome.runtime.sendMessage({ type: 'USAGE_DATA', records: usageRecords, isIncremental }).catch(() => {});
-    console.log(`[cursor-stats] usage committed: ${usageRecords.length} records (incr=${isIncremental})`);
+    // 为每条记录打上 accountId 标签（若 accountId 已知）
+    const taggedRecords = accountId
+      ? usageRecords.map(r => ({ ...r, accountId }))
+      : usageRecords;
+    chrome.runtime.sendMessage({ type: 'USAGE_DATA', records: taggedRecords, isIncremental }).catch(() => {});
+    console.log(`[cursor-stats] usage committed: ${taggedRecords.length} records (incr=${isIncremental}, accountId=${accountId ?? 'n/a'})`);
   } else if (page === 'spending' && spendingData !== null) {
     chrome.runtime.sendMessage({ type: 'SPENDING_DATA', spending: spendingData }).catch(() => {});
     console.log('[cursor-stats] spending committed');
@@ -743,16 +740,19 @@ async function runScrape(page: 'usage' | 'spending'): Promise<void> {
     ).catch(() => sleep(3_000));
   }
 
+  // 先读取当前登录用户名，随 PAGE_READY 一起发给 background 做账号校验
+  const detectedUser = readCurrentUserId();
+
   // 通知 background 就绪，拿回采集参数
   let params: ScrapeParams | null = null;
   try {
-    params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page }) as ScrapeParams | null;
+    params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page, detectedUser }) as ScrapeParams | null;
   } catch {
     // background SW 未响应（极少情况），按全量兜底
   }
 
   if (params) {
-    await doScrape(page, params.isIncremental, params.cutoffIso);
+    await doScrape(page, params.isIncremental, params.cutoffIso, params.accountId);
   } else {
     await doScrape(page, false, null);
   }
@@ -912,9 +912,10 @@ export default defineContentScript({
     }
 
     // ── 通知 background 就绪，拿回采集参数 ──────────────────────────────────
+    const detectedUser2 = readCurrentUserId();
     let params: ScrapeParams | null = null;
     try {
-      params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page }) as ScrapeParams | null;
+      params = await chrome.runtime.sendMessage({ type: 'PAGE_READY', page, detectedUser: detectedUser2 }) as ScrapeParams | null;
     } catch {
       // background SW 未响应（极少情况），按全量兜底
     }
@@ -949,7 +950,7 @@ export default defineContentScript({
       );
       try {
         await Promise.race([
-          doScrape(page, params?.isIncremental ?? false, params?.cutoffIso ?? null),
+          doScrape(page, params?.isIncremental ?? false, params?.cutoffIso ?? null, params?.accountId),
           hardTimeout,
         ]);
       } catch (e) {

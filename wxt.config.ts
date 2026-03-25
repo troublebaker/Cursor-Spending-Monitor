@@ -12,15 +12,15 @@ export default defineConfig({
     disabled: true,
   },
   manifest: {
-    name: 'Cursor Stats',
-    description: 'Track your Cursor.com API usage & spending — fully local',
+    name: 'Cursor Spending Monitor',
+    description: 'Track your Cursor.com API usage & spending — fully local, no API Key needed',
     version: '0.1.0',
     permissions: ['storage', 'alarms', 'tabs', 'sidePanel', 'notifications'],
     host_permissions: [
       'https://cursor.com/*',
       'https://www.cursor.com/*',
     ],
-    action: { default_title: 'Cursor Stats' },
+    action: { default_title: 'Cursor Spending Monitor' },
     side_panel: { default_path: 'sidepanel.html' },
     icons: {
       '16': 'icon/16.png',

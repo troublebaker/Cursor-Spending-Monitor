@@ -85,6 +85,18 @@ export const userNameStorage = storage.defineItem<string>(
   { fallback: 'unknown' },
 );
 
+/** 所有曾见过的账号列表（去重，按首次发现时间排序） */
+export const knownAccountsStorage = storage.defineItem<string[]>(
+  'local:knownAccounts',
+  { fallback: [] },
+);
+
+/** 当前选中的账号过滤器（'' = 全部账号，非空 = 仅显示该账号数据） */
+export const selectedAccountStorage = storage.defineItem<string>(
+  'local:selectedAccount',
+  { fallback: '' },
+);
+
 /** InboxPanel 消息列表（最多保留 100 条，新消息在前） */
 export const inboxStorage = storage.defineItem<InboxMessage[]>(
   'local:inboxMessages',

@@ -1,17 +1,19 @@
+import { getLatestDt, mergeRecords, nextIntervalMin, onScrapeComplete, saveSpending } from '../utils/merge';
 import { runMigrations } from '../utils/migrations';
-import { mergeRecords, getLatestDt, saveSpending, onScrapeComplete, nextIntervalMin } from '../utils/merge';
 import {
+  autoIncludeTokenStorage,
   dashboardTabIdStorage,
-  scrapeStateStorage,
-  scrapeModeStorage,
-  noTabReminderStorage,
   inboxStorage,
+  knownAccountsStorage,
+  noTabReminderStorage,
+  pendingSlowScrapeStorage,
+  scrapeModeStorage,
+  scrapeStateStorage,
+  selectedAccountStorage,
   slowScrapeStateStorage,
   usageStorage,
-  pendingSlowScrapeStorage,
-  autoIncludeTokenStorage,
 } from '../utils/storage';
-import type { ExtMessage, ScrapeParams, InboxMessage, TokenBreakdown } from '../utils/types';
+import type { ExtMessage, InboxMessage, ScrapeParams, TokenBreakdown } from '../utils/types';
 
 // ─── URL 工具 ─────────────────────────────────────────────────────────────────
 
@@ -334,9 +336,33 @@ export default defineBackground(async () => {
           }
         }
 
-        const latestDt = await getLatestDt();
         const isSlowTab = slowRunning && senderTabId === slowTabId;
-        // 慢速增量：收集已有 tokenBreakdown 的行 key，content script 跳过这些行
+
+        // ── 账号匹配校验 ──────────────────────────────────────────────────────
+        const detectedUser = (msg as { detectedUser?: string }).detectedUser ?? '';
+        let resolvedAccountId: string | undefined;
+
+        if (detectedUser && detectedUser !== 'unknown') {
+          // 更新 knownAccounts（去重）
+          const known = await knownAccountsStorage.getValue();
+          if (!known.includes(detectedUser)) {
+            await knownAccountsStorage.setValue([...known, detectedUser]);
+          }
+
+          // 自动将 selectedAccount 切换为当前检测到的账号（不丢弃数据）
+          const selectedAccount = await selectedAccountStorage.getValue();
+          if (selectedAccount !== detectedUser) {
+            await selectedAccountStorage.setValue(detectedUser);
+            console.log(`[cursor-stats] account switched: "${selectedAccount || '(all)'}" → "${detectedUser}"`);
+          }
+
+          // 通知 sidepanel 账号选择已更新
+          broadcastToContexts({ type: 'ACCOUNT_SWITCHED', detectedUser });
+          resolvedAccountId = detectedUser;
+        }
+
+        // cutoff 必须在 resolvedAccountId 确定后计算，否则会用其他账号的最新时间污染增量 cutoff
+        const latestDt = await getLatestDt(resolvedAccountId);
         const existingTokenKeys = isSlowTab
           ? (await usageStorage.getValue())
               .filter(r => r.tokenBreakdown != null)
@@ -347,6 +373,7 @@ export default defineBackground(async () => {
           cutoffIso: latestDt ? latestDt.toISOString() : null,
           slowMode: isSlowTab,
           existingTokenKeys,
+          accountId: resolvedAccountId,
         };
         sendResponse(params);
       })();

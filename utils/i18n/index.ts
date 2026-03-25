@@ -53,6 +53,13 @@ export function useI18n() {
       setLangState(saved);
       setDict(resolveDict(saved));
     });
+    // 监听其他组件实例切换语言时的 storage 变化
+    const unwatch = langStorage.watch((newLang) => {
+      const v = newLang ?? '';
+      setLangState(v);
+      setDict(resolveDict(v));
+    });
+    return () => unwatch();
   }, []);
 
   const setLang = async (newLang: SupportedLang | '') => {

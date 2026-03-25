@@ -95,9 +95,9 @@ export function RecordTable({ records, t }: Props) {
                 <td className="px-2 py-1.5 text-right font-mono text-zinc-400 dark:text-zinc-500 whitespace-nowrap text-[11px]">
                   {r.tokenBreakdown ? formatTokens(r.tokenBreakdown.output) : <span className="text-zinc-300 dark:text-zinc-600">-</span>}
                 </td>
-                {/* 费用 */}
+                {/* 费用：优先显示 cursor.com 原始字符串（如 "US$0.04"） */}
                 <td className="px-2 py-1.5 text-right font-mono text-zinc-600 dark:text-zinc-300 whitespace-nowrap">
-                  {r.cost > 0 ? `$${r.cost.toFixed(4)}` : '—'}
+                  {r.costRaw ?? (r.cost > 0 ? `$${r.cost.toFixed(4)}` : '—')}
                 </td>
               </tr>
             ))}

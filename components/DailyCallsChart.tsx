@@ -1,19 +1,28 @@
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
+import { useState, useEffect } from 'react';
 import type { UsageRecord } from '../utils/types';
 import type { LocaleDict } from '../utils/i18n/zh-CN';
 
-interface Props {
-  records: UsageRecord[];
-  t: LocaleDict;
+interface Props { records: UsageRecord[]; t: LocaleDict }
+
+function useDark() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+  useEffect(() => {
+    const obs = new MutationObserver(() =>
+      setDark(document.documentElement.classList.contains('dark')));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+  return dark;
 }
 
 function aggregate(records: UsageRecord[]) {
   const map = new Map<string, { onDemand: number; included: number }>();
   for (const r of records) {
-    const day = r.dt.slice(0, 10); // "2026-03-15"
+    const day   = r.dt.slice(0, 10);
     const entry = map.get(day) ?? { onDemand: 0, included: 0 };
     if (r.type.toLowerCase().includes('on-demand')) entry.onDemand += 1;
     else entry.included += 1;
@@ -21,32 +30,42 @@ function aggregate(records: UsageRecord[]) {
   }
   return Array.from(map.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, v]) => ({
-      date: date.slice(5), // "03-15"
-      [v.onDemand > 0 ? 'onDemand' : '_od']: v.onDemand,
-      onDemand: v.onDemand,
-      included: v.included,
-    }));
+    .map(([date, v]) => ({ date: date.slice(5), onDemand: v.onDemand, included: v.included }));
 }
 
 export function DailyCallsChart({ records, t }: Props) {
-  const data = aggregate(records);
+  const dark = useDark();
+  const data  = aggregate(records);
   if (!data.length) return <p className="px-4 py-6 text-xs text-zinc-400 text-center">{t.noData}</p>;
+
+  const total = records.length;
+  const tickColor = dark ? '#a1a1aa' : '#71717a';
+  const gridColor = dark ? '#27272a' : '#f4f4f5';
 
   return (
     <div className="px-2 pb-3 pt-1">
-      <ResponsiveContainer width="100%" height={180}>
-        <BarChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-zinc-100 dark:text-zinc-800" />
-          <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+      <p className="px-2 pb-1 text-[11px] text-zinc-400 text-right">
+        {t.total} <span className="font-semibold text-zinc-600 dark:text-zinc-300">{total}{t.callsUnit ? ` ${t.callsUnit}` : ''}</span>
+      </p>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize: 10, fill: tickColor }}
+            interval="preserveStartEnd"
+          />
+          <YAxis
+            tick={{ fontSize: 10, fill: tickColor }}
+            allowDecimals={false}
+          />
           <Tooltip
-            contentStyle={{ fontSize: 11 }}
+            contentStyle={{ fontSize: 11, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
             labelStyle={{ fontWeight: 600 }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar dataKey="onDemand" name={t.onDemand} stackId="a" fill="#6366f1" radius={[0, 0, 0, 0]} />
-          <Bar dataKey="included" name={t.included} stackId="a" fill="#a5b4fc" radius={[2, 2, 0, 0]} />
+          <Bar dataKey="onDemand" name={t.onDemand} stackId="a" fill="#6366f1" />
+          <Bar dataKey="included" name={t.included} stackId="a" fill="#a5b4fc" radius={[3, 3, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>

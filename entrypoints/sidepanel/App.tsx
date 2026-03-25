@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTheme } from '../../hooks/useTheme';
-import { useI18n } from '../../utils/i18n';
+import { useI18n, detectBrowserLang } from '../../utils/i18n';
 import type { ThemeMode } from '../../hooks/useTheme';
 import type { SupportedLang } from '../../utils/i18n';
 import {
@@ -13,6 +13,8 @@ import {
   inboxStorage,
   slowScrapeStateStorage,
   autoIncludeTokenStorage,
+  knownAccountsStorage,
+  selectedAccountStorage,
 } from '../../utils/storage';
 import type { UsageRecord, SpendingData, ScrapeMode, InboxMessage } from '../../utils/types';
 import { SummaryCards } from '../../components/SummaryCards';
@@ -21,26 +23,17 @@ import { OnDemandPanel } from '../../components/OnDemandPanel';
 import { CollapseSection } from '../../components/CollapseSection';
 import { DailyCallsChart } from '../../components/DailyCallsChart';
 import { DailyCostChart } from '../../components/DailyCostChart';
+import { DailyTokenChart } from '../../components/DailyTokenChart';
 import { ModelChart } from '../../components/ModelChart';
 import { RecordTable } from '../../components/RecordTable';
 import { WelcomePage } from '../../components/WelcomePage';
 import { StatusBar } from '../../components/StatusBar';
-import { DebugPanel } from '../../components/DebugPanel';
 import { TestPanel } from '../../components/TestPanel';
 import { InboxPanel } from '../../components/InboxPanel';
+import { ShareMenu } from '../../components/ShareMenu';
+import { Tooltip } from '../../components/Tooltip';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
-
-const THEME_OPTIONS: { value: ThemeMode; icon: string }[] = [
-  { value: 'light',  icon: '☀️' },
-  { value: 'dark',   icon: '🌙' },
-  { value: 'system', icon: '💻' },
-];
-
-const LANG_OPTIONS: { value: SupportedLang; getLabel: (t: ReturnType<typeof useI18n>['t']) => string }[] = [
-  { value: 'zh-CN', getLabel: (t) => t.langZh },
-  { value: 'en',    getLabel: (t) => t.langEn },
-];
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -73,9 +66,16 @@ function App() {
   // 自动采集含 Token 设置
   const [autoIncludeToken, setAutoIncludeToken] = useState(false);
 
+  // 反馈邮箱复制 Toast
+  const [emailCopied, setEmailCopied] = useState(false);
+
   // InboxPanel 状态
   const [inboxMessages,    setInboxMessages]    = useState<InboxMessage[]>([]);
   const [slowScrapeRunning, setSlowScrapeRunning] = useState(false);
+
+  // 账号管理
+  const [knownAccounts, setKnownAccounts]     = useState<string[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState<string>('');
 
   // ── 初始化 + storage watch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -89,7 +89,9 @@ function App() {
       inboxStorage.getValue(),
       slowScrapeStateStorage.getValue(),
       autoIncludeTokenStorage.getValue(),
-    ]).then(([u, s, ob, sm, ss, inbox, sss, ait]) => {
+      knownAccountsStorage.getValue(),
+      selectedAccountStorage.getValue(),
+    ]).then(([u, s, ob, sm, ss, inbox, sss, ait, ka, sa]) => {
       setUsage(u);
       setSpending(s);
       setOnboarded(ob);
@@ -101,6 +103,8 @@ function App() {
       setInboxMessages(inbox);
       setSlowScrapeRunning(sss.isRunning);
       setAutoIncludeToken(ait);
+      setKnownAccounts(ka);
+      setSelectedAccount(sa);
 
       // 侧边栏已打开：通知 background 重置指数衰减，按基准间隔重新调度
       if (sm === 'auto' || sm === 'auto_calm') {
@@ -118,6 +122,12 @@ function App() {
     const unwatchAutoToken = autoIncludeTokenStorage.watch(v => {
       if (v !== null) setAutoIncludeToken(v);
     });
+    const unwatchAccounts = knownAccountsStorage.watch(v => {
+      if (v) setKnownAccounts(v);
+    });
+    const unwatchSelectedAccount = selectedAccountStorage.watch(v => {
+      if (v !== null) setSelectedAccount(v);
+    });
     const unwatchState    = scrapeStateStorage.watch(v => {
       if (!v) return;
       setIsRunning(v.isRunning);
@@ -133,6 +143,8 @@ function App() {
       unwatchInbox();
       unwatchSlowState();
       unwatchAutoToken();
+      unwatchAccounts();
+      unwatchSelectedAccount();
       unwatchState();
     };
   }, []);
@@ -161,10 +173,15 @@ function App() {
         // background 广播 inbox 消息（实时更新，storage.watch 同步持久化部分）
         setInboxMessages(prev => [msg.message as InboxMessage, ...prev].slice(0, 100));
       }
-      if (msg.type === 'SLOW_SCRAPE_DONE') {
-        setSlowScrapeRunning(false);
+      if (msg.type === 'ACCOUNT_SWITCHED') {
+        // 账号发现/切换 → 同步刷新账号列表和当前选中账号
+        knownAccountsStorage.getValue().then(v => setKnownAccounts(v));
+        selectedAccountStorage.getValue().then(v => setSelectedAccount(v));
       }
       if (msg.type === 'SLOW_SCRAPE_FAILED_SLOW') {
+        setSlowScrapeRunning(false);
+      }
+      if (msg.type === 'SLOW_SCRAPE_DONE') {
         setSlowScrapeRunning(false);
       }
     };
@@ -220,20 +237,61 @@ function App() {
   );
 
   // 图表数据：优先用当月，若当月为空则显示全部记录（帮助调试）
-  const displayRecords = monthRecords.length > 0 ? monthRecords : usage;
+  // 同时按选中账号过滤（selectedAccount='' 则显示全部）
+  const accountFilteredUsage = useMemo(
+    () => selectedAccount ? usage.filter(r => r.accountId === selectedAccount) : usage,
+    [usage, selectedAccount],
+  );
+  const accountFilteredMonth = useMemo(
+    () => accountFilteredUsage.filter(r => {
+      if (r.dt.startsWith(currentMonth)) return true;
+      const d = new Date(r.dt);
+      if (isNaN(d.getTime())) return false;
+      return d.getFullYear() === new Date().getFullYear()
+        && d.getMonth() === new Date().getMonth();
+    }),
+    [accountFilteredUsage, currentMonth],
+  );
+  const displayRecords = accountFilteredMonth.length > 0 ? accountFilteredMonth : accountFilteredUsage;
 
   const monthlyCost = useMemo(
     () => monthRecords.filter(r => r.type.toLowerCase().includes('on-demand')).reduce((s, r) => s + r.cost, 0),
     [monthRecords],
   );
 
+  // ── CSV 导出 ────────────────────────────────────────────────────────────────
+  function exportCsv() {
+    const headers = ['Date', 'Type', 'Model', 'Tokens', 'Cost', 'Input Tokens', 'Output Tokens', 'Cache Read', 'Cache Write'];
+    const rows = displayRecords.map(r => [
+      r.dt,
+      r.type,
+      r.model,
+      r.tokens,
+      r.costRaw ?? (r.cost > 0 ? r.cost.toFixed(6) : ''),
+      r.tokenBreakdown?.input   ?? '',
+      r.tokenBreakdown?.output  ?? '',
+      r.tokenBreakdown?.cacheRead  ?? '',
+      r.tokenBreakdown?.cacheWrite ?? '',
+    ]);
+    const csv = [headers, ...rows]
+      .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cursor-spending-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // ── 操作处理 ────────────────────────────────────────────────────────────────
   const handleStart = async () => {
     await onboardedStorage.setValue(true);
-    await scrapeModeStorage.setValue('auto');
+    await scrapeModeStorage.setValue('manual');
     setOnboarded(true);
-    setScrapeMode('auto');
-    chrome.runtime.sendMessage({ type: 'TRIGGER_SCRAPE' }).catch(() => {});
+    setScrapeMode('manual');
+    // 不自动触发采集；首次引导后默认手动，用户自行点击「更新数据」
   };
 
   const handleModeChange = async (newMode: ScrapeMode) => {
@@ -265,10 +323,28 @@ function App() {
   };
 
   const handleClearData = async () => {
-    await usageStorage.setValue([]);
-    await spendingStorage.setValue(null);
-    setUsage([]);
-    setSpending(null);
+    if (selectedAccount) {
+      // 只删除当前选中账号的记录，保留其他账号数据
+      const all = await usageStorage.getValue();
+      const remaining = all.filter(r => r.accountId !== selectedAccount);
+      await usageStorage.setValue(remaining);
+      setUsage(remaining);
+      // 从已知账号列表中移除该账号
+      const updatedAccounts = knownAccounts.filter(a => a !== selectedAccount);
+      await knownAccountsStorage.setValue(updatedAccounts);
+      setKnownAccounts(updatedAccounts);
+      // 重置账号选择
+      await selectedAccountStorage.setValue('');
+      setSelectedAccount('');
+    } else {
+      // 无选中账号 = 清空全部
+      await usageStorage.setValue([]);
+      await spendingStorage.setValue(null);
+      await knownAccountsStorage.setValue([]);
+      setUsage([]);
+      setSpending(null);
+      setKnownAccounts([]);
+    }
     setLastResult(null);
   };
 
@@ -312,6 +388,17 @@ function App() {
     setInboxMessages([]);
   };
 
+  const handleAccountChange = async (account: string) => {
+    setSelectedAccount(account);
+    await selectedAccountStorage.setValue(account);
+  };
+
+  const handleCopyEmail = async () => {
+    await navigator.clipboard.writeText('codejames971@gmail.com');
+    setEmailCopied(true);
+    setTimeout(() => setEmailCopied(false), 2200);
+  };
+
   // ── 渲染 ────────────────────────────────────────────────────────────────────
 
   // 初次加载中
@@ -350,60 +437,116 @@ function App() {
       {!(import.meta.env.DEV && showTest) && (<>
 
       {/* ── 顶栏 ── */}
-      <header className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-700 sticky top-0 bg-white dark:bg-zinc-900 z-10">
-        <span className="font-semibold tracking-tight">{t.appTitle}</span>
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1">
-            {LANG_OPTIONS.map(({ value, getLabel }) => (
+      <header className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 sticky top-0 bg-white dark:bg-zinc-900 z-10 gap-2">
+        {/* 左侧：账号选择器 */}
+        <div className="flex items-center gap-1.5 shrink-0 min-w-0">
+          {knownAccounts.length > 0 && (
+            <Tooltip text={t.accountTooltip} position="bottom" maxWidth={210}>
+              <select
+                value={selectedAccount}
+                onChange={e => handleAccountChange(e.target.value)}
+                className="text-[10px] bg-zinc-100 dark:bg-zinc-800 border-0 rounded-md px-1.5 py-0.5 text-zinc-500 dark:text-zinc-400 cursor-pointer max-w-[100px] truncate"
+              >
+                <option value="">{t.accountAll}</option>
+                {knownAccounts.map(a => (
+                  <option key={a} value={a} title={a}>
+                    {a.length > 16 ? a.slice(0, 14) + '…' : a}
+                  </option>
+                ))}
+              </select>
+            </Tooltip>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 min-w-0">
+
+          {/* ── 社交按钮组（最醒目位置：最左侧） ── */}
+          <div className="flex items-center gap-1">
+            <ShareMenu />
+            <Tooltip text={t.followTooltip} position="bottom" maxWidth={160}>
               <button
-                key={value}
-                onClick={() => setLang(value)}
+                onClick={() => chrome.tabs.create({ url: 'https://x.com/intent/follow?screen_name=CodeJames333025', active: true })}
+                className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 dark:text-zinc-400 transition-colors"
+              >
+                <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor">
+                  <path d="M12.6 1h2.4L9.7 7l6.1 8H11L7.3 9.7 3.1 15H.7l5.7-6.5L.3 1h5.2L8.7 5.8zM11.8 13.5h1.3L4.3 2.4H2.9z"/>
+                </svg>
+              </button>
+            </Tooltip>
+            <Tooltip text={t.feedbackTooltip} position="bottom" maxWidth={185}>
+              <button
+                onClick={handleCopyEmail}
                 className={[
-                  'px-2 py-1 text-xs rounded-md transition-colors',
-                  (lang === value || (lang === '' && value === 'zh-CN'))
-                    ? 'bg-brand text-white'
-                    : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700',
+                  'w-7 h-7 flex items-center justify-center rounded-md transition-colors',
+                  emailCopied
+                    ? 'bg-green-100 dark:bg-green-900/40 text-green-500'
+                    : 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 dark:text-zinc-400',
                 ].join(' ')}
               >
-                {getLabel(t)}
+                {emailCopied ? (
+                  <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 8l4 4 8-8" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <rect x="1" y="4" width="14" height="10" rx="1.5" />
+                    <path d="M1 6.5 8 10l7-3.5" />
+                  </svg>
+                )}
               </button>
-            ))}
+            </Tooltip>
           </div>
-          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
-          {/* InboxPanel 触发器（位于语言/主题按钮中间） */}
+
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 shrink-0" />
+
+          {/* ── 语言下拉 ── */}
+          <Tooltip text={t.langTooltip} position="bottom" maxWidth={150}>
+            <select
+              value={lang || detectBrowserLang()}
+              onChange={e => setLang(e.target.value as SupportedLang)}
+              className="text-xs bg-zinc-100 dark:bg-zinc-800 border-0 rounded-md px-1.5 py-1 text-zinc-600 dark:text-zinc-300 cursor-pointer"
+            >
+              <option value="zh-CN">中文</option>
+              <option value="en">EN</option>
+            </select>
+          </Tooltip>
+
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 shrink-0" />
+
+          {/* ── 信箱 ── */}
           <InboxPanel
             messages={inboxMessages}
             isRunning={slowScrapeRunning}
             onClear={handleInboxClear}
           />
-          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
-          <div className="flex gap-1">
-            {THEME_OPTIONS.map(({ value, icon }) => (
-              <button
-                key={value}
-                onClick={() => setTheme(value)}
-                title={value === 'light' ? t.themeLight : value === 'dark' ? t.themeDark : t.themeSystem}
-                className={[
-                  'w-7 h-7 flex items-center justify-center rounded-md transition-colors text-base',
-                  mode === value
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                    : 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
-                ].join(' ')}
-              >
-                {icon}
-              </button>
-            ))}
-          </div>
-          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
-          {/* 测试面板入口（仅开发模式） */}
-          {import.meta.env.DEV && (
-            <button
-              onClick={handleOpenTest}
-              title="打开测试面板（自动暂停采集）"
-              className="w-7 h-7 flex items-center justify-center rounded-md text-base bg-zinc-100 hover:bg-amber-100 dark:bg-zinc-800 dark:hover:bg-amber-900/40 transition-colors"
+
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 shrink-0" />
+
+          {/* ── 主题下拉 ── */}
+          <Tooltip text={t.themeTooltip} position="bottom" maxWidth={140}>
+            <select
+              value={mode}
+              onChange={e => setTheme(e.target.value as ThemeMode)}
+              className="text-xs bg-zinc-100 dark:bg-zinc-800 border-0 rounded-md px-1.5 py-1 text-zinc-600 dark:text-zinc-300 cursor-pointer"
             >
-              ⚗️
-            </button>
+              <option value="light">☀️ {t.themeLight}</option>
+              <option value="dark">🌙 {t.themeDark}</option>
+              <option value="system">💻 {t.themeSystem}</option>
+            </select>
+          </Tooltip>
+
+          {/* ── DEV 测试面板入口 ── */}
+          {import.meta.env.DEV && (
+            <>
+              <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 shrink-0" />
+              <Tooltip text="测试面板（自动暂停采集）" position="bottom">
+                <button
+                  onClick={handleOpenTest}
+                  className="w-7 h-7 flex items-center justify-center rounded-md text-base bg-zinc-100 hover:bg-amber-100 dark:bg-zinc-800 dark:hover:bg-amber-900/40 transition-colors"
+                >
+                  ⚗️
+                </button>
+              </Tooltip>
+            </>
           )}
         </div>
       </header>
@@ -506,42 +649,56 @@ function App() {
         </div>
       )}
 
-      {/* ── Section 3：明细记录（有数据才渲染，默认展开） ── */}
-      {usage.length > 0 && (
-        <CollapseSection title={t.detailTable} defaultOpen>
-          <RecordTable records={displayRecords} t={t} />
-        </CollapseSection>
-      )}
-
-      {/* ── 图表区（有数据才渲染，默认折叠，F05 后续开发） ── */}
+      {/* ── 图表区（有数据才渲染，默认展开，用户折叠状态自动持久化） ── */}
       {usage.length > 0 && (
         <>
-          <CollapseSection title={t.dailyCalls}>
+          <CollapseSection id="sec-daily-calls" title={t.dailyCalls} defaultOpen>
             <DailyCallsChart records={displayRecords} t={t} />
           </CollapseSection>
-          <CollapseSection title={t.dailyCost}>
+          <CollapseSection id="sec-daily-cost" title={t.dailyCost} defaultOpen>
             <DailyCostChart records={displayRecords} t={t} />
           </CollapseSection>
-          <CollapseSection title={t.topModels}>
+          <CollapseSection id="sec-models" title={t.topModels} defaultOpen>
             <ModelChart records={displayRecords} t={t} />
+          </CollapseSection>
+          <CollapseSection id="sec-tokens" title={t.dailyTokens} defaultOpen>
+            <DailyTokenChart records={displayRecords} t={t} />
           </CollapseSection>
         </>
       )}
 
+      {/* ── 明细记录（最下方，默认折叠，持久化状态） ── */}
+      {usage.length > 0 && (
+        <CollapseSection
+          id="sec-records"
+          title={t.detailTable}
+          extra={
+            displayRecords.length > 0 ? (
+              <button
+                onClick={exportCsv}
+                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 dark:text-zinc-400 transition-colors"
+              >
+                <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 2v9M4 8l4 4 4-4" />
+                  <path d="M2 13h12" />
+                </svg>
+                {t.exportCsv}
+              </button>
+            ) : undefined
+          }
+        >
+          <RecordTable records={displayRecords} t={t} />
+        </CollapseSection>
+      )}
+
       </>)}
 
-      {/* ── 调试面板（始终可见，默认折叠） ── */}
-      <DebugPanel
-        t={t}
-        usage={usage}
-        spending={spending}
-        currentMonth={currentMonth}
-        monthRecordsCount={monthRecords.length}
-        onDataCleared={() => {
-          setUsage([]);
-          setSpending(null);
-        }}
-      />
+      {/* 邮箱复制 Toast */}
+      {emailCopied && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[400] px-4 py-2 bg-zinc-800 dark:bg-zinc-700 text-white text-xs rounded-xl shadow-lg pointer-events-none">
+          {t.emailCopied}
+        </div>
+      )}
 
       </>)}  {/* end !showTest */}
 
