@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy – Cursor Spending Monitor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Google Sans', Roboto, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      color: #202124;
+      background: #fff;
+    }
+
+    /* ── Top bar ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid #e8eaed;
+    }
+    header .logo {
+      font-size: 20px;
+      font-weight: 500;
+      color: #1a73e8;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    header .sep { color: #dadce0; }
+    header .page-title {
+      font-size: 16px;
+      color: #5f6368;
+    }
+
+    /* ── Layout ── */
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 400;
+      color: #202124;
+      margin-bottom: 8px;
+    }
+    .meta {
+      font-size: 14px;
+      color: #5f6368;
+      margin-bottom: 40px;
+    }
+
+    h2 {
+      font-size: 20px;
+      font-weight: 500;
+      color: #202124;
+      margin-top: 40px;
+      margin-bottom: 12px;
+    }
+    p { margin-bottom: 12px; color: #3c4043; }
+    ul {
+      padding-left: 24px;
+      margin-bottom: 12px;
+      color: #3c4043;
+    }
+    li { margin-bottom: 6px; }
+    a { color: #1a73e8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .highlight-box {
+      background: #e8f0fe;
+      border-left: 4px solid #1a73e8;
+      border-radius: 4px;
+      padding: 16px 20px;
+      margin: 24px 0;
+      color: #1a237e;
+      font-size: 15px;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid #e8eaed;
+      padding: 24px;
+      text-align: center;
+      font-size: 13px;
+      color: #5f6368;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="logo" href="#">Cursor Spending Monitor</a>
+  <span class="sep">›</span>
+  <span class="page-title">Privacy Policy</span>
+</header>
+
+<div class="container">
+  <h1>Privacy Policy</h1>
+  <p class="meta">Last updated: March 25, 2026 &nbsp;·&nbsp; Effective date: March 25, 2026</p>
+
+  <div class="highlight-box">
+    <strong>Short version:</strong> Cursor Spending Monitor does not collect, transmit, or share any personal data.
+    All data stays on your device inside Chrome's local storage. No servers. No analytics. No tracking.
+  </div>
+
+  <h2>1. About This Extension</h2>
+  <p>
+    Cursor Spending Monitor is a free, open-source Chrome extension that reads your
+    <a href="https://cursor.com" target="_blank" rel="noopener">cursor.com</a> dashboard
+    locally to help you visualize API usage, costs, and quotas.
+    It requires no login, no API key, and never leaves your browser.
+  </p>
+
+  <h2>2. Data We Collect</h2>
+  <p>
+    We do <strong>not</strong> collect any personal information.
+    The extension only reads and stores data locally on your device:
+  </p>
+  <ul>
+    <li>Usage records from your cursor.com dashboard (model name, token counts, cost per request)</li>
+    <li>Spending summary (plan name, quota percentages, on-demand usage)</li>
+    <li>Your cursor.com username – used solely to segregate records when multiple accounts are used on the same browser profile</li>
+    <li>Your UI preferences (theme, language, alert thresholds) stored via <code>chrome.storage.local</code></li>
+  </ul>
+  <p>
+    All of the above data is stored exclusively in <code>chrome.storage.local</code> on your own device.
+    It is never uploaded, synced to any server, or shared with any third party.
+  </p>
+
+  <h2>3. Data We Do NOT Collect</h2>
+  <ul>
+    <li>We do not collect your cursor.com password or authentication tokens</li>
+    <li>We do not collect any browsing history outside of cursor.com dashboard pages</li>
+    <li>We do not use cookies, fingerprinting, or any tracking technology</li>
+    <li>We do not transmit any data over the internet</li>
+    <li>We do not use third-party analytics or advertising SDKs</li>
+  </ul>
+
+  <h2>4. Permissions Used</h2>
+  <p>The extension requests the following permissions, each for a specific stated purpose:</p>
+  <ul>
+    <li><strong>storage</strong> – Save your usage records and preferences locally</li>
+    <li><strong>alarms</strong> – Schedule periodic background data refreshes</li>
+    <li><strong>tabs</strong> – Open and navigate the cursor.com dashboard tab for scraping</li>
+    <li><strong>sidePanel</strong> – Display the extension UI in Chrome's side panel</li>
+    <li><strong>notifications</strong> – Send budget alerts when on-demand spending exceeds your threshold</li>
+    <li><strong>host_permissions: cursor.com</strong> – Inject content scripts only into cursor.com dashboard pages</li>
+  </ul>
+  <p>No permission grants access to data on any other website or service.</p>
+
+  <h2>5. Data Sharing</h2>
+  <p>
+    We never sell, rent, or share your data with any third party.
+    The extension operates entirely offline after installation and does not communicate
+    with any external server or API.
+  </p>
+
+  <h2>6. Data Retention &amp; Deletion</h2>
+  <p>
+    Data is retained in <code>chrome.storage.local</code> until you explicitly clear it
+    (via the "Clear data" button in the extension) or uninstall the extension.
+    Uninstalling the extension automatically removes all stored data.
+  </p>
+
+  <h2>7. Children's Privacy</h2>
+  <p>
+    This extension is not directed at children under the age of 13 and does not knowingly
+    collect any information from children. Since the extension collects no personal data at all,
+    it is safe for users of any age.
+  </p>
+
+  <h2>8. Changes to This Policy</h2>
+  <p>
+    If we ever materially change this privacy policy, we will update the "Last updated" date above
+    and release a new version of the extension. Continued use after an update constitutes acceptance.
+  </p>
+
+  <h2>9. Open Source</h2>
+  <p>
+    This extension is fully open source. You can review every line of code to verify our
+    privacy claims:
+    <a href="https://github.com/CodeJames333025/cursor-stats" target="_blank" rel="noopener">
+      github.com/CodeJames333025/cursor-stats
+    </a>
+  </p>
+
+  <h2>10. Contact</h2>
+  <p>
+    If you have questions or concerns about this privacy policy, please contact us at:<br />
+    <a href="mailto:codejames971@gmail.com">codejames971@gmail.com</a>
+  </p>
+</div>
+
+<footer>
+  © 2026 Cursor Spending Monitor · MIT License ·
+  <a href="https://github.com/CodeJames333025/cursor-stats" target="_blank" rel="noopener">GitHub</a>
+</footer>
+
+</body>
+</html>

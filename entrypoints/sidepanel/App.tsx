@@ -28,7 +28,7 @@ import { ModelChart } from '../../components/ModelChart';
 import { RecordTable } from '../../components/RecordTable';
 import { WelcomePage } from '../../components/WelcomePage';
 import { StatusBar } from '../../components/StatusBar';
-import { TestPanel } from '../../components/TestPanel';
+// import { TestPanel } from '../../components/TestPanel'; // 测试面板（暂时注释，保留备用）
 import { InboxPanel } from '../../components/InboxPanel';
 import { ShareMenu } from '../../components/ShareMenu';
 import { Tooltip } from '../../components/Tooltip';
@@ -60,8 +60,8 @@ function App() {
   const prevIsRunningRef  = useRef(false);
   const prevUsageLengthRef = useRef(0);
 
-  // 测试面板开关（仅 DEV 模式可用）
-  const [showTest, setShowTest] = useState(false);
+  // 测试面板开关（已注释，保留备用）
+  // const [showTest, setShowTest] = useState(false);
 
   // 自动采集含 Token 设置
   const [autoIncludeToken, setAutoIncludeToken] = useState(false);
@@ -366,15 +366,14 @@ function App() {
     });
   };
 
-  const handleOpenTest = async () => {
-    // 进入测试模式前先切换为手动，暂停 alarm 驱动的自动采集
-    await handleModeChange('manual');
-    setShowTest(true);
-  };
+  // const handleOpenTest = async () => {
+  //   await handleModeChange('manual');
+  //   setShowTest(true);
+  // };
 
-  const handleCloseTest = () => {
-    setShowTest(false);
-  };
+  // const handleCloseTest = () => {
+  //   setShowTest(false);
+  // };
 
   const handleSlowScrapeStart = () => {
     chrome.runtime.sendMessage({ type: 'SLOW_SCRAPE_START' }).catch(() => {});
@@ -424,18 +423,19 @@ function App() {
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-sans text-sm">
 
-      {/* ── 测试面板（全屏覆盖，顶栏不显示） ── */}
-      {import.meta.env.DEV && showTest && (
+      {/* ── 测试面板（全屏覆盖，顶栏不显示）── 暂时注释，保留备用 ── */}
+      {/* {import.meta.env.DEV && showTest && (
         <TestPanel
           usage={usage}
           spending={spending}
           status={{ isRunning, lastScrapeAt, noDataCount, loginRequired, scrapeMode }}
           onClose={handleCloseTest}
         />
-      )}
+      )} */}
 
       {/* ── 以下内容在测试面板打开时隐藏 ── */}
-      {!(import.meta.env.DEV && showTest) && (<>
+      {/* 测试面板已注释，始终渲染主界面 */}
+      {true && (<>
 
       {/* ── 顶栏 ── */}
       <header className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 sticky top-0 bg-white dark:bg-zinc-900 z-10 gap-2">
@@ -535,8 +535,8 @@ function App() {
             </select>
           </Tooltip>
 
-          {/* ── DEV 测试面板入口 ── */}
-          {import.meta.env.DEV && (
+          {/* ── DEV 测试面板入口（已注释，保留备用） ── */}
+          {/* {import.meta.env.DEV && (
             <>
               <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 shrink-0" />
               <Tooltip text="测试面板（自动暂停采集）" position="bottom">
@@ -548,7 +548,7 @@ function App() {
                 </button>
               </Tooltip>
             </>
-          )}
+          )} */}
         </div>
       </header>
 

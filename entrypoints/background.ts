@@ -283,8 +283,8 @@ export default defineBackground(async () => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
   // ── Dev 模式：SW 重启（热重载）时自动刷新 dashboard tab，重新注入 content script ──
-  // 每次保存代码后 background 重启，旧 content script 上下文失效，需要 tab reload 才能重连
-  if (import.meta.env.DEV) {
+  // 已注释，开发/生产统一打包（需要时取消注释）
+  /* if (import.meta.env.DEV) {
     (async () => {
       const savedId = await dashboardTabIdStorage.getValue();
       if (savedId !== null) {
@@ -295,7 +295,7 @@ export default defineBackground(async () => {
         }
       }
     })();
-  }
+  } */
 
   // ── 消息处理（content script / sidepanel → background） ──────────────────────
   chrome.runtime.onMessage.addListener((msg: ExtMessage, sender, sendResponse) => {
@@ -326,7 +326,9 @@ export default defineBackground(async () => {
         } else if (!state.isRunning && senderTabId !== null) {
           // 慢速采集 tab 的 PAGE_READY 不设置 normal isRunning（慢速采集由 slowScrapeStateStorage 独立跟踪）
           // 只有 normal 采集 tab 才设置 scrapeStateStorage.isRunning = true
-          if (!(slowRunning && senderTabId === slowTabId)) {
+          // ★ 追加守卫：cycleStartedAt !== 0 确保只有"有主"的 tab reload 才能触发采集
+          //   防止 SLOW_SCRAPE_CANCEL 后残留的 reload 误触发新的快速采集
+          if (!(slowRunning && senderTabId === slowTabId) && cycleStartedAt !== 0) {
             await scrapeStateStorage.setValue({ ...state, isRunning: true, lastError: null });
             cycleUsageAdded = 0;
             cycleStartedAt = Date.now();
@@ -442,6 +444,8 @@ export default defineBackground(async () => {
             id: makeId(), ts: new Date().toISOString(), kind: 'error',
             text: '✗ 慢速采集已手动取消，数据已全部抛弃',
           });
+          // 同步通知 UI 更新 slowScrapeRunning（不依赖 storage watch 的时序）
+          broadcastToContexts({ type: 'SLOW_SCRAPE_FAILED_SLOW', reason: '手动取消', errorType: 'cancelled' });
         }
         const state = await scrapeStateStorage.getValue();
         await scrapeStateStorage.setValue({ ...state, isRunning: false, lastError: 'cancelled' });
@@ -524,7 +528,8 @@ export default defineBackground(async () => {
           page: number; totalPages: number; rowsUpdated: number; breakdown: Record<string, TokenBreakdown>;
         };
 
-        // 累积到内存（只有 SLOW_SCRAPE_ALL_DONE 才真正写 storage）
+        // 每页完成立即写入 storage（不等 SLOW_SCRAPE_ALL_DONE，避免取消/中断后丢失数据）
+        const pageSaved = await mergeBreakdown(breakdown);
         for (const [key, val] of Object.entries(breakdown)) {
           slowBreakdownAccum[key] = val;
         }
@@ -538,10 +543,10 @@ export default defineBackground(async () => {
           startedAt:   null,
         });
 
-        // 推 inbox 进度消息（不在这里结束，等 SLOW_SCRAPE_ALL_DONE）
+        // 推 inbox 进度消息（已完成的页用 info 静止图标，不用 progress 转圈）
         await pushInboxMessage({
-          id: makeId(), ts: new Date().toISOString(), kind: 'progress',
-          text: `第 ${page}${totalPages > 0 ? `/${totalPages}` : ''} 页完成，本页 hover ${rowsUpdated} 行，累积 ${accumulatedRows} 条`,
+          id: makeId(), ts: new Date().toISOString(), kind: 'info',
+          text: `第 ${page}${totalPages > 0 ? `/${totalPages}` : ''} 页完成，本页写入 ${pageSaved} 行，累积 ${accumulatedRows} 条`,
           page,
           totalPages: totalPages || page,
           rowsUpdated,
@@ -555,8 +560,8 @@ export default defineBackground(async () => {
     // ── 慢速采集：content script 全部页面自然完成 ─────────────────────────────
     if (msg.type === 'SLOW_SCRAPE_ALL_DONE') {
       (async () => {
-        // 一次性将所有累积数据写入 storage
-        const saved = await mergeBreakdown(slowBreakdownAccum);
+        // 数据已在每页完成时写入（SLOW_SCRAPE_PAGE handler），这里只做收尾
+        const totalWritten = Object.keys(slowBreakdownAccum).length;
         slowBreakdownAccum = {};
         slowRunning = false;
         slowTabId   = null;
@@ -570,12 +575,12 @@ export default defineBackground(async () => {
 
         await pushInboxMessage({
           id: makeId(), ts: new Date().toISOString(), kind: 'success',
-          text: `✓ 全部 ${state.currentPage} 页采集完成，写入 ${saved} 条 Token 明细`,
+          text: `✓ 全部 ${state.currentPage} 页采集完成，累计写入 ${totalWritten} 条 Token 明细`,
           page: state.currentPage,
           totalPages: state.totalPages,
-          rowsUpdated: saved,
+          rowsUpdated: totalWritten,
         });
-        broadcastToContexts({ type: 'SLOW_SCRAPE_DONE', totalUpdated: saved });
+        broadcastToContexts({ type: 'SLOW_SCRAPE_DONE', totalUpdated: totalWritten });
         sendResponse({ ok: true });
       })();
       return true;
