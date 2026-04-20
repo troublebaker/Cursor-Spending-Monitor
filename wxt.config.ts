@@ -15,7 +15,7 @@ export default defineConfig({
     name: 'Cursor Spending Monitor',
     description: 'Track your Cursor.com API usage & spending — fully local, no API Key needed',
     version: '0.1.0',
-    permissions: ['storage', 'alarms', 'tabs', 'sidePanel', 'notifications'],
+    permissions: ['storage', 'alarms', 'tabs', 'sidePanel'],
     host_permissions: [
       'https://cursor.com/*',
       'https://www.cursor.com/*',
