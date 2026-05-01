@@ -3,7 +3,8 @@
 > Track your Cursor.com API usage & spending — fully local, no API key, no server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-brightgreen?logo=googlechrome)](https://chromewebstore.google.com)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/ejhbbdfjonjoacmggekjjpilaeplbnek?logo=googlechrome&label=Chrome)](https://chromewebstore.google.com/detail/cursor-spending-monitor/ejhbbdfjonjoacmggekjjpilaeplbnek)
+[![Edge Add-ons](https://img.shields.io/badge/Edge-Add--ons-0078D7?logo=microsoftedge)](https://microsoftedge.microsoft.com/addons/detail/cursor-spending-monitor/gfdehkijfajcebgjhjkiablglkckjgoa)
 [![WXT](https://img.shields.io/badge/Built%20with-WXT-blueviolet)](https://wxt.dev)
 
 English · [中文](README.zh-CN.md)
@@ -27,9 +28,17 @@ English · [中文](README.zh-CN.md)
 
 ## 🚀 Installation
 
-### From Chrome Web Store *(coming soon)*
+### From Chrome Web Store
 
-Search **"Cursor Spending Monitor"** or click the badge above.
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/ejhbbdfjonjoacmggekjjpilaeplbnek?label=Chrome%20Web%20Store&logo=googlechrome)](https://chromewebstore.google.com/detail/cursor-spending-monitor/ejhbbdfjonjoacmggekjjpilaeplbnek)
+
+Search **"Cursor Spending Monitor"** in the Chrome Web Store, or install directly via the badge above.
+
+### From Microsoft Edge Add-ons
+
+[![Edge Add-ons](https://img.shields.io/badge/Edge-Add--ons-0078D7?logo=microsoftedge)](https://microsoftedge.microsoft.com/addons/detail/cursor-spending-monitor/gfdehkijfajcebgjhjkiablglkckjgoa)
+
+Search **"Cursor Spending Monitor"** in the Edge Add-ons store.
 
 ### Load Unpacked (Developer)
 

@@ -1,10 +1,10 @@
 # Cursor Spending Monitor
 
-> 追踪你的 Cursor.com API 用量与消费——完全本地运行，无需 API Key，无需服务器。
+> 可视化你的 Cursor.com API 用量与消费 — 完全本地运行，无需 API Key，无服务器。
 
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/ejhbbdfjonjoacmggekjjpilaeplbnek?logo=googlechrome&label=Chrome)](https://chromewebstore.google.com/detail/cursor-spending-monitor/ejhbbdfjonjoacmggekjjpilaeplbnek)
+[![Edge Add-ons](https://img.shields.io/badge/Edge-Add--ons-0078D7?logo=microsoftedge)](https://microsoftedge.microsoft.com/addons/detail/cursor-spending-monitor/gfdehkijfajcebgjhjkiablglkckjgoa)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-brightgreen?logo=googlechrome)](https://chromewebstore.google.com)
-[![WXT](https://img.shields.io/badge/Built%20with-WXT-blueviolet)](https://wxt.dev)
 
 [English](README.md) · 中文
 
@@ -12,26 +12,29 @@
 
 ## ✨ 功能特性
 
-- 📊 **用量仪表盘** — 可视化每日 API 调用次数、Token 用量与消费趋势
-- 💰 **按需费用追踪** — 与 cursor.com 后台完全一致的原始费用格式（如 US$0.04）
-- 🧾 **明细记录表** — 日期、类型、模型、Tokens、缓存读写、输入输出 Token、费用，一览无余
-- 📈 **多维图表** — 每日调用量、每日费用、每日 Token（5 项指标可按模型切换）、模型分布
-- 👤 **多账号支持** — 数据严格按账号隔离；检测到账号切换时自动适配，无需手动操作
-- 🔔 **消费告警** *(即将推出)* — 按需消费超过阈值时推送通知
-- 📤 **CSV 导出** — 一键导出全部记录，UTF-8 BOM 兼容 Excel
-- 🌐 **中英双语** — 随浏览器语言自动切换，也可手动选择
-- 🌙 **深色 / 浅色主题** — 跟随系统，或手动切换
-- 🔒 **100% 本地** — 无服务器、无 API Key、零数据上传
+- 📊 **用量仪表盘** — 可视化每日 API 调用次数、Token 用量、消费趋势
+- 💰 **按需费用追踪** — 精确显示每次请求费用（如 US$0.04），与 cursor.com 账单完全一致
+- 🧾 **详细记录表格** — 日期、类型、模型、Token、缓存读写、输入输出、费用
+- 📈 **多维图表** — 每日调用、每日费用、每日 Token（5 项指标 / 模型）、模型分布
+- 👤 **多账号支持** — 按账号严格隔离数据，切换账号自动识别
+- 📤 **CSV 导出** — 一键导出全部记录，Excel 兼容（UTF-8 BOM）
+- 🌙 **深色 / 浅色模式** — 跟随系统或手动切换
+- 🌐 **中英文界面** — 跟随浏览器语言自动切换
+- 🔒 **100% 本地** — 无服务器、无 API Key、不收集任何数据
 
 ---
 
-## 🚀 安装方式
+## 🚀 安装
 
-### Chrome 网上应用店 *(即将上线)*
+### Chrome 应用商店（推荐）
 
-搜索 **"Cursor Spending Monitor"** 或点击上方徽章。
+在 Chrome 应用商店搜索 **"Cursor Spending Monitor"**，或点击上方徽章直接安装。
 
-### 开发者加载（手动安装）
+### Microsoft Edge 加载项
+
+在 Edge 加载项商店搜索 **"Cursor Spending Monitor"**，或点击上方徽章直接安装。
+
+### 手动加载（开发者）
 
 ```bash
 # 1. 克隆仓库
@@ -44,78 +47,19 @@ pnpm install
 # 3. 构建
 pnpm build
 
-# 4. 在 Chrome 加载
-# chrome://extensions → 打开"开发者模式" → "加载已解压的扩展程序" → 选择 .output/chrome-mv3/
-```
-
----
-
-## 🛠 开发指南
-
-```bash
-pnpm dev          # 启动开发服务器（支持热重载）
-pnpm build        # 生产构建 → .output/chrome-mv3/
-pnpm zip          # 打包供 Chrome 网上应用店上传 → .output/*.zip
-pnpm compile      # TypeScript 类型检查（零错误 = 通过）
-```
-
-**推荐开发流程：**
-
-1. `wxt.config.ts` 中保留 `webExt: { disabled: true }`（已配置）
-2. 运行 `pnpm dev`
-3. Chrome 中：`chrome://extensions` → **加载已解压的扩展程序** → `.output/chrome-mv3/`
-4. 保存任意文件 → background ~2 秒内自动重载
-
-> ⚠️ **不要**用拖拽方式安装 — 这会断开 Chrome 与 `.output/` 目录的连接，导致热重载失效。
-
----
-
-## 📁 项目结构
-
-```
-wxt-dev-wxt/
-├── entrypoints/
-│   ├── background.ts        # Service Worker：定时任务、数据合并、通知
-│   ├── content.ts           # 注入 cursor.com/*/dashboard/* 页面
-│   └── sidepanel/
-│       ├── index.html
-│       ├── main.tsx
-│       └── App.tsx          # 主 React UI
-├── components/
-│   ├── SpendingCard.tsx      # 套餐配额进度条
-│   ├── OnDemandPanel.tsx     # 按需用量面板
-│   ├── RecordTable.tsx       # 用量明细表格
-│   ├── StatusBar.tsx         # 采集控制栏
-│   ├── InboxPanel.tsx        # 进度/错误消息收件箱
-│   ├── ShareMenu.tsx         # 分享 / GitHub 链接
-│   ├── Tooltip.tsx           # 视口感知自定义 Tooltip
-│   ├── CollapseSection.tsx   # 可折叠区块（记忆状态）
-│   └── charts/
-│       ├── DailyCallsChart.tsx
-│       ├── DailyCostChart.tsx
-│       ├── DailyTokenChart.tsx
-│       └── ModelChart.tsx
-├── utils/
-│   ├── parser.ts             # DOM 解析（最后验证：2026-03-25）
-│   ├── merge.ts              # 增量去重 + 账号感知截止时间
-│   ├── storage.ts            # WXT storage 定义
-│   ├── types.ts              # 共享 TypeScript 类型
-│   └── i18n/                 # en.ts / zh-CN.ts / index.ts
-├── docs/
-│   └── privacy-policy.html  # 隐私政策（Chrome 网上应用店用）
-├── public/icon/              # 16 / 32 / 48 / 96 / 128 px 图标
-└── wxt.config.ts
+# 4. 在 Chrome 中加载
+# 打开 chrome://extensions → 开启"开发者模式" → 点击"加载已解压的扩展程序" → 选择 .output/chrome-mv3/
 ```
 
 ---
 
 ## 🔒 隐私说明
 
-**你的数据永远不会离开你的设备。**
+**你的数据永远不会离开本机。**
 
-- 所有采集数据均存储在本机的 `chrome.storage.local` 中
+- 所有抓取数据存储在本机的 `chrome.storage.local` 中
 - 不向任何外部服务器发送网络请求
-- 无分析统计、无追踪、无遥测
+- 无埋点、无追踪、无遥测
 
 查看完整 [隐私政策](https://troublebaker.github.io/Cursor-Spending-Monitor/docs/privacy-policy.html)。
 
@@ -126,31 +70,52 @@ wxt-dev-wxt/
 ```
 用户访问 cursor.com/*/dashboard/usage
   → content script 等待表格渲染完成
-  → 采集用量记录（全部分页）+ 消费卡片
-  → sendMessage({ type: 'USAGE_DATA', records })
+  → 抓取用量记录（支持翻页）+ Spending 卡片
+  → 发送消息 { type: 'USAGE_DATA', records }
   → background 增量合并写入 chrome.storage.local（按账号隔离）
-  → background 将标签页导航至 /dashboard/spending
-  → content script 采集按需配额数据
-  → 侧边栏读取 storage，渲染图表 + 明细表
+  → background 导航至 /dashboard/spending
+  → content script 抓取按需额度
+  → 侧边栏读取 storage，渲染图表 + 记录表格
 ```
 
 **采集模式：**
 
 | 模式 | 触发方式 | 行为 |
 |---|---|---|
-| 快速 | 点击「更新数据」 | 从上次已知日期增量采集 |
-| +Token | 点击「更新数据+Token」 | 快速采集 + 悬停每行获取 Token 明细 |
-| 自动活跃 | 每 1 分钟 → 指数衰减 → 1 小时无数据后停止 | 后台定时 alarm |
+| 快速 | 点击「更新数据」 | 从上次已知日期增量抓取 |
+| +Token | 点击「更新数据+token」 | 快速模式 + 悬停每行获取 Token 详情 |
+| 自动 | 每 1 分钟 → 指数退避 → 1 小时无新数据后停止 | 后台定时器 |
 
 ---
 
-## 🤝 参与贡献
+## 📁 项目结构
 
-欢迎提交 PR 和 Issue！较大改动请先开 Issue 讨论。
+```
+wxt-dev-wxt/
+├── entrypoints/
+│   ├── background.ts        # Service Worker：定时器、数据合并
+│   ├── content.ts           # 注入 cursor.com/*/dashboard/*
+│   └── sidepanel/           # React 侧边栏 UI
+├── components/              # React 组件（图表、卡片、表格等）
+├── utils/
+│   ├── parser.ts            # DOM 解析（最后验证：2026-03-25）
+│   ├── merge.ts             # 增量去重 + 账号感知截断
+│   ├── storage.ts           # WXT storage 封装
+│   └── i18n/                # 多语言（en / zh-CN）
+├── docs/
+│   └── privacy-policy.html # 隐私政策
+└── wxt.config.ts
+```
 
-1. Fork 本仓库
+---
+
+## 🤝 贡献
+
+欢迎提交 PR 和 Issue！大改动请先开 Issue 讨论。
+
+1. Fork 仓库
 2. 创建功能分支：`git checkout -b feat/my-feature`
-3. 提交：`git commit -m "feat: 描述"`
+3. 提交：`git commit -m "feat: description"`
 4. 推送并创建 PR
 
 ---
